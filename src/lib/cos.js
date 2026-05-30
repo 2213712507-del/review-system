@@ -4,22 +4,17 @@ export const BUCKET = 'review-videos-1438185079';
 export const REGION = 'ap-beijing';
 export const BASE_URL = `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-/**
- * 调用 Edge Function（使用 supabase.functions.invoke，自带认证）
- */
 async function callFunction(body) {
   const { data, error } = await supabase.functions.invoke('cos-upload', { body });
-  if (error) {
-    throw new Error(error.message || '请求失败');
-  }
+  if (error) throw new Error(error.message || '请求失败');
   return data;
 }
 
 /**
- * Upload file to COS
+ * Upload file to COS（预签名 URL，签名已包含在 URL 中）
  */
 export async function uploadToCOS(file, key, onProgress) {
-  const { uploadUrl, authorization, publicUrl } = await callFunction({
+  const { uploadUrl, publicUrl } = await callFunction({
     key,
     contentType: file.type,
   });
@@ -44,7 +39,6 @@ export async function uploadToCOS(file, key, onProgress) {
     xhr.addEventListener('error', () => reject(new Error('网络错误')));
 
     xhr.open('PUT', uploadUrl);
-    xhr.setRequestHeader('Authorization', authorization);
     xhr.setRequestHeader('Content-Type', file.type);
     xhr.send(file);
   });
@@ -69,9 +63,6 @@ export async function deleteFromCOS(key) {
     headers: { 'Authorization': authorization },
   });
 
-  if (!delRes.ok) {
-    throw new Error('删除失败');
-  }
-
+  if (!delRes.ok) throw new Error('删除失败');
   return { success: true };
 }

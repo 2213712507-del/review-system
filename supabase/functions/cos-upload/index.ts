@@ -8,14 +8,24 @@ const BUCKET = "review-videos-1438185079";
 const REGION = "ap-beijing";
 const HOST = `${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-function sign(method: string, key: string, expireSeconds = 600): string {
+function sign(method: string, key: string, headers: Record<string, string>, expireSeconds = 600): string {
   const now = Math.floor(Date.now() / 1000);
   const expire = now + expireSeconds;
   const keyTime = `${now};${expire}`;
 
   const signKey = createHmac("sha1", SECRET_KEY).update(keyTime).digest("hex");
+
+  // 构建 header 列表（按字典序排序）
+  const headerKeys = Object.keys(headers).sort();
+  const headerList = headerKeys.map(k => k.toLowerCase()).join(";");
+  const httpHeaders = headerKeys
+    .map(k => `${k.toLowerCase()}=${encodeURIComponent(headers[k])}`)
+    .join("&");
+
   const uriPathname = "/" + key;
-  const httpString = `${method.toLowerCase()}\n${uriPathname}\n\nhost=${HOST}\n`;
+  const httpParameters = ""; // 预签名URL没有query参数参与签名
+  const httpString = `${method.toLowerCase()}\n${uriPathname}\n${httpParameters}\n${httpHeaders}\n`;
+
   const sha1HttpString = createHmac("sha1", signKey).update(httpString).digest("hex");
   const stringToSign = `sha1\n${keyTime}\n${sha1HttpString}\n`;
   const signature = createHmac("sha1", signKey).update(stringToSign).digest("hex");
@@ -25,7 +35,7 @@ function sign(method: string, key: string, expireSeconds = 600): string {
     `q-ak=${SECRET_ID}`,
     `q-sign-time=${keyTime}`,
     `q-key-time=${keyTime}`,
-    `q-header-list=host`,
+    `q-header-list=${headerList}`,
     `q-url-param-list=`,
     `q-signature=${signature}`,
   ].join("&");
@@ -43,7 +53,6 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // 允许 JWT token 或 anon key
     const authHeader = req.headers.get("authorization") || "";
     const apikeyHeader = req.headers.get("apikey") || "";
     const isAnonKey = apikeyHeader === SUPABASE_ANON_KEY;
@@ -68,7 +77,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "delete") {
       const deleteUrl = `https://${HOST}/${encodeURIComponent(key)}`;
-      const authorization = sign("DELETE", key);
+      const authorization = sign("DELETE", key, { host: HOST });
       return new Response(
         JSON.stringify({ deleteUrl, authorization }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -76,7 +85,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "view") {
-      const authorization = sign("GET", key, 86400);
+      const authorization = sign("GET", key, { host: HOST }, 86400);
       const viewUrl = `https://${HOST}/${encodeURIComponent(key)}?${authorization}`;
       return new Response(
         JSON.stringify({ url: viewUrl }),
@@ -91,11 +100,20 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const authorization = sign("PUT", key);
-    const uploadUrl = `https://${HOST}/${encodeURIComponent(key)}`;
+    // 上传：签名包含 host 和 content-type
+    const authorization = sign("PUT", key, {
+      host: HOST,
+      "content-type": contentType,
+    });
+
+    // 签名作为 URL 参数（预签名 URL 方式）
+    const uploadUrl = `https://${HOST}/${encodeURIComponent(key)}?${authorization}`;
 
     return new Response(
-      JSON.stringify({ uploadUrl, authorization, publicUrl: `https://${HOST}/${key}` }),
+      JSON.stringify({
+        uploadUrl,
+        publicUrl: `https://${HOST}/${key}`,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
