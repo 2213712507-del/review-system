@@ -35,6 +35,23 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Replace root index with redirect
+        run: |
+          cat > ./dist/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+          <meta charset="UTF-8">
+          <meta http-equiv="refresh" content="0;url=/review-system/">
+          <script>location.replace('/review-system/');</script>
+          <title>视频审片系统</title>
+          </head>
+          <body>
+          <p>跳转中... <a href="/review-system/">点击进入视频审片系统</a></p>
+          </body>
+          </html>
+          EOF
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
