@@ -35,25 +35,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Create root redirect index.html
-        run: |
-          mkdir -p dist_root
-          cat > dist_root/index.html << 'HTMLEOF'
-          <!DOCTYPE html>
-          <html lang="zh-CN">
-          <head>
-          <meta charset="UTF-8">
-          <meta http-equiv="refresh" content="0;url=/review-system/">
-          <title>视频审片系统</title>
-          </head>
-          <body>
-          <p>跳转中... <a href="/review-system/">点击进入视频审片系统</a></p>
-          </body>
-          </html>
-          HTMLEOF
-          # Merge: copy dist_root content into dist/
-          cp dist_root/index.html dist/index.html
-
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
