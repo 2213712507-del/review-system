@@ -48,8 +48,10 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // 允许 Supabase anon key 或 JWT token
     const authHeader = req.headers.get("authorization");
-    if (!authHeader) {
+    const apikey = req.headers.get("apikey");
+    if (!authHeader && !apikey) {
       return new Response(JSON.stringify({ error: "未登录" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
