@@ -45,11 +45,10 @@ export async function uploadToCOS(file, key, onProgress) {
 }
 
 /**
- * Get pre-signed URL for viewing video
+ * Get public URL for viewing video（bucket 设为公有读后无需签名）
  */
 export async function getPresignedUrl(key) {
-  const { url } = await callFunction({ key, action: 'view' });
-  return url;
+  return `${BASE_URL}/${key}`;
 }
 
 /**
