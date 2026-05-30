@@ -32,8 +32,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build (GitHub Pages base path)
-        run: VITE_BASE=/review-system/ npm run build -- --base=/review-system/
+      - name: Build
+        run: npm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
