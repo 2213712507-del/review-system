@@ -67,12 +67,20 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "delete") {
-      // 删除操作：返回带签名的 DELETE URL
       const deleteUrl = `https://${HOST}/${encodeURIComponent(key)}`;
       const authorization = sign("DELETE", key);
-
       return new Response(
         JSON.stringify({ deleteUrl, authorization }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (action === "view") {
+      // 生成预签名观看 URL（24小时有效）
+      const authorization = sign("GET", key, 86400);
+      const viewUrl = `https://${HOST}/${encodeURIComponent(key)}?${authorization}`;
+      return new Response(
+        JSON.stringify({ url: viewUrl }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

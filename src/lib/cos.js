@@ -68,12 +68,31 @@ export async function uploadToCOS(file, key, onProgress) {
 }
 
 /**
- * Get pre-signed URL for private video (via Edge Function)
+ * Get pre-signed URL for viewing video（via Edge Function，24小时有效）
  */
 export async function getPresignedUrl(key) {
-  // 如果 bucket 是公开读，直接用 publicUrl
-  // 如果是私有读，需要另一个 Edge Function 生成签名 URL
-  return `${BASE_URL}/${key}`;
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+
+  const res = await fetch(
+    'https://brqiryhudyopxarhfbgd.supabase.co/functions/v1/cos-upload',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ key, action: 'view' }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || '获取播放链接失败');
+  }
+
+  const { url } = await res.json();
+  return url;
 }
 
 /**
