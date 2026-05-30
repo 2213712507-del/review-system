@@ -36,9 +36,6 @@ export default function Login() {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
-          options: {
-            emailRedirectTo: window.location.origin + '/login',
-          },
         });
         if (signUpError) {
           setError(signUpError.message);
@@ -46,7 +43,15 @@ export default function Login() {
           if (data.user && data.user.identities?.length === 0) {
             setError('该邮箱已注册，请直接登录');
           } else {
-            setMessage('注册成功！请检查邮箱，点击验证链接完成验证。验证后请联系管理员审核账号。');
+            // 注册后直接登录（已关闭邮箱验证）
+            setMessage('注册成功！正在登录...');
+            const { error: loginError } = await supabase.auth.signInWithPassword({
+              email,
+              password,
+            });
+            if (!loginError) {
+              navigate('/');
+            }
           }
         }
       }
