@@ -1,109 +1,116 @@
-import COS from 'cos-js-sdk-v5';
 import { supabase } from './supabase';
 
 export const BUCKET = 'review-videos-1438185079';
 export const REGION = 'ap-beijing';
 export const BASE_URL = `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-let cosInstance = null;
-
 /**
- * 从 Supabase 读取 COS 配置并初始化 SDK
+ * 通过 Supabase Edge Function 获取 COS 预签名上传 URL
+ * 密钥仅存于服务端，前端不接触
  */
-async function getCOS() {
-  if (cosInstance) return cosInstance;
+async function getUploadSignature(key, contentType) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
 
-  const { data, error } = await supabase
-    .from('cos_config')
-    .select('secret_id, secret_key')
-    .single();
+  const res = await fetch(
+    'https://brqiryhudyopxarhfbgd.supabase.co/functions/v1/cos-upload',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ key, contentType }),
+    }
+  );
 
-  if (error || !data) {
-    throw new Error('获取存储配置失败');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || '获取上传签名失败');
   }
 
-  cosInstance = new COS({
-    SecretId: data.secret_id,
-    SecretKey: data.secret_key,
-  });
-
-  return cosInstance;
+  return res.json();
 }
 
 /**
- * Upload file to COS
+ * Upload file to COS（前端直接用预签名 URL PUT，密钥不经过浏览器）
  */
 export async function uploadToCOS(file, key, onProgress) {
-  const cos = await getCOS();
+  const { uploadUrl, authorization, publicUrl } = await getUploadSignature(
+    key,
+    file.type
+  );
+
   return new Promise((resolve, reject) => {
-    cos.putObject(
-      {
-        Bucket: BUCKET,
-        Region: REGION,
-        Key: key,
-        Body: file,
-        onProgress: (info) => {
-          if (onProgress) {
-            onProgress(Math.round(info.percent * 100));
-          }
-        },
-      },
-      (err, data) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve({
-            key,
-            url: `${BASE_URL}/${key}`,
-            location: data.Location,
-          });
-        }
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
       }
-    );
+    });
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status === 200) {
+        resolve({ key, url: publicUrl });
+      } else {
+        reject(new Error(`上传失败: ${xhr.status}`));
+      }
+    });
+
+    xhr.addEventListener('error', () => reject(new Error('网络错误')));
+
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Authorization', authorization);
+    xhr.setRequestHeader('Content-Type', file.type);
+    xhr.send(file);
   });
 }
 
 /**
- * Get pre-signed URL for private video (valid for 24 hours)
+ * Get pre-signed URL for private video (via Edge Function)
  */
 export async function getPresignedUrl(key) {
-  const cos = await getCOS();
-  return new Promise((resolve, reject) => {
-    cos.getObjectUrl(
-      {
-        Bucket: BUCKET,
-        Region: REGION,
-        Key: key,
-        Sign: true,
-        Expires: 86400,
-      },
-      (err, data) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(data.Url);
-        }
-      }
-    );
-  });
+  // 如果 bucket 是公开读，直接用 publicUrl
+  // 如果是私有读，需要另一个 Edge Function 生成签名 URL
+  return `${BASE_URL}/${key}`;
 }
 
 /**
- * Delete file from COS
+ * Delete file from COS（via Edge Function 签名）
  */
 export async function deleteFromCOS(key) {
-  const cos = await getCOS();
-  return new Promise((resolve, reject) => {
-    cos.deleteObject(
-      {
-        Bucket: BUCKET,
-        Region: REGION,
-        Key: key,
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+
+  const res = await fetch(
+    'https://brqiryhudyopxarhfbgd.supabase.co/functions/v1/cos-upload',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
       },
-      (err, data) => {
-        if (err) reject(err);
-        else resolve(data);
-      }
-    );
+      body: JSON.stringify({ key, action: 'delete' }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || '删除失败');
+  }
+
+  const { deleteUrl, authorization } = await res.json();
+
+  // 用签名 URL 执行删除
+  const delRes = await fetch(deleteUrl, {
+    method: 'DELETE',
+    headers: { 'Authorization': authorization },
   });
+
+  if (!delRes.ok) {
+    throw new Error('删除失败');
+  }
+
+  return { success: true };
 }
