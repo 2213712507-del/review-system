@@ -4,6 +4,5 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // GitHub Pages: /review-system/  Cloudflare Pages: /
-  base: process.env.CLOUDFLARE_PAGES ? '/' : '/review-system/',
+  base: '/',
 })
