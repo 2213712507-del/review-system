@@ -9,5 +9,18 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // 处理 GitHub Pages 404 重定向：从 sessionStorage 恢复路径
+      (function() {
+        var redirect = sessionStorage.getItem('redirect');
+        if (redirect) {
+          sessionStorage.removeItem('redirect');
+          // 去掉多余的 /review-system 前缀（如果 base 是 /review-system 会有）
+          if (redirect !== '/' && redirect !== location.pathname) {
+            history.replaceState(null, null, redirect);
+          }
+        }
+      })();
+    </script>
   </body>
 </html>
