@@ -1,28 +1,23 @@
 // Supabase Edge Function: COS 操作代理
-// 用服务端密钥生成预签名 URL，密钥永不离开服务端
-
 import { createHmac } from "https://deno.land/std@0.177.0/node/crypto.ts";
 
 const SECRET_ID = Deno.env.get("COS_SECRET_ID")!;
 const SECRET_KEY = Deno.env.get("COS_SECRET_KEY")!;
+const SUPABASE_ANON_KEY = "sb_publishable_5A5J4K_7surYTf6P_iQ0MQ_YkpRGbRs";
 const BUCKET = "review-videos-1438185079";
 const REGION = "ap-beijing";
 const HOST = `${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-// 生成 COS 签名
 function sign(method: string, key: string, expireSeconds = 600): string {
   const now = Math.floor(Date.now() / 1000);
   const expire = now + expireSeconds;
   const keyTime = `${now};${expire}`;
 
   const signKey = createHmac("sha1", SECRET_KEY).update(keyTime).digest("hex");
-
   const uriPathname = "/" + key;
   const httpString = `${method.toLowerCase()}\n${uriPathname}\n\nhost=${HOST}\n`;
-
   const sha1HttpString = createHmac("sha1", signKey).update(httpString).digest("hex");
   const stringToSign = `sha1\n${keyTime}\n${sha1HttpString}\n`;
-
   const signature = createHmac("sha1", signKey).update(stringToSign).digest("hex");
 
   return [
@@ -48,10 +43,13 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // 允许 Supabase anon key 或 JWT token
-    const authHeader = req.headers.get("authorization");
-    const apikey = req.headers.get("apikey");
-    if (!authHeader && !apikey) {
+    // 允许 JWT token 或 anon key
+    const authHeader = req.headers.get("authorization") || "";
+    const apikeyHeader = req.headers.get("apikey") || "";
+    const isAnonKey = apikeyHeader === SUPABASE_ANON_KEY;
+    const hasJWT = authHeader.startsWith("Bearer ");
+
+    if (!isAnonKey && !hasJWT) {
       return new Response(JSON.stringify({ error: "未登录" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -78,7 +76,6 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "view") {
-      // 生成预签名观看 URL（24小时有效）
       const authorization = sign("GET", key, 86400);
       const viewUrl = `https://${HOST}/${encodeURIComponent(key)}?${authorization}`;
       return new Response(
@@ -87,7 +84,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 上传操作
     if (!contentType) {
       return new Response(JSON.stringify({ error: "缺少 contentType" }), {
         status: 400,
@@ -99,11 +95,7 @@ Deno.serve(async (req: Request) => {
     const uploadUrl = `https://${HOST}/${encodeURIComponent(key)}`;
 
     return new Response(
-      JSON.stringify({
-        uploadUrl,
-        authorization,
-        publicUrl: `https://${HOST}/${key}`,
-      }),
+      JSON.stringify({ uploadUrl, authorization, publicUrl: `https://${HOST}/${key}` }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

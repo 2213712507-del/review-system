@@ -4,39 +4,19 @@ export const BUCKET = 'review-videos-1438185079';
 export const REGION = 'ap-beijing';
 export const BASE_URL = `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-const FN_URL = 'https://brqiryhudyopxarhfbgd.supabase.co/functions/v1/cos-upload';
-
 /**
- * 调用 Edge Function（带 auth token + apikey）
+ * 调用 Edge Function（使用 supabase.functions.invoke，自带认证）
  */
 async function callFunction(body) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'apikey': 'sb_publishable_5A5J4K_7surYTf6P_iQ0MQ_YkpRGbRs',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  const { data, error } = await supabase.functions.invoke('cos-upload', { body });
+  if (error) {
+    throw new Error(error.message || '请求失败');
   }
-
-  const res = await fetch(FN_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || '请求失败');
-  }
-
-  return res.json();
+  return data;
 }
 
 /**
- * Upload file to COS（前端直接用预签名 URL PUT，密钥不经过浏览器）
+ * Upload file to COS
  */
 export async function uploadToCOS(file, key, onProgress) {
   const { uploadUrl, authorization, publicUrl } = await callFunction({
@@ -71,7 +51,7 @@ export async function uploadToCOS(file, key, onProgress) {
 }
 
 /**
- * Get pre-signed URL for viewing video（24小时有效）
+ * Get pre-signed URL for viewing video
  */
 export async function getPresignedUrl(key) {
   const { url } = await callFunction({ key, action: 'view' });
