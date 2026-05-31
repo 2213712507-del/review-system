@@ -415,6 +415,7 @@ export default function ReviewTable() {
 function VideoPlayer({ item }) {
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -434,15 +435,17 @@ function VideoPlayer({ item }) {
     return () => { cancelled = true; };
   }, [item.video_key]);
 
-  async function handlePlay() {
-    const video = videoRef.current;
-    if (!video) return;
-    try {
-      if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
-        await video.requestPictureInPicture();
-      }
-    } catch (e) {
-      // 用户可能手动退出画中画，忽略错误
+  function handleExpand(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setExpanded(true);
+  }
+
+  function handleClose(e) {
+    e.stopPropagation();
+    setExpanded(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
     }
   }
 
@@ -450,14 +453,33 @@ function VideoPlayer({ item }) {
   if (!url) return <div style={styles.videoError}>加载失败</div>;
 
   return (
-    <video
-      ref={videoRef}
-      src={url}
-      controls
-      style={styles.video}
-      preload="metadata"
-      onPlay={handlePlay}
-    />
+    <>
+      {/* 表格中的缩略图 */}
+      <video
+        src={url}
+        muted
+        style={{ ...styles.video, cursor: 'pointer' }}
+        preload="metadata"
+        onClick={handleExpand}
+        title="点击放大播放"
+      />
+
+      {/* 大屏播放层 */}
+      {expanded && (
+        <div style={styles.overlay} onClick={handleClose}>
+          <div style={styles.overlayContent} onClick={(e) => e.stopPropagation()}>
+            <button style={styles.closeBtn} onClick={handleClose}>✕</button>
+            <video
+              ref={videoRef}
+              src={url}
+              controls
+              autoPlay
+              style={styles.expandedVideo}
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -565,6 +587,32 @@ const styles = {
   video: { maxWidth: 200, maxHeight: 150, width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: 8, background: '#000' },
   videoLoading: { fontSize: 12, color: '#aaa', padding: '40px 0', textAlign: 'center' },
   videoError: { fontSize: 12, color: '#dc2626', padding: '40px 0', textAlign: 'center' },
+
+  // Expanded video overlay
+  overlay: {
+    position: 'fixed', inset: 0, zIndex: 9999,
+    background: 'rgba(0,0,0,0.85)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  overlayContent: {
+    position: 'relative',
+    width: '90vw', maxWidth: 1200, maxHeight: '90vh',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'default',
+  },
+  expandedVideo: {
+    width: '100%', maxHeight: '90vh', objectFit: 'contain',
+    borderRadius: 8, background: '#000',
+  },
+  closeBtn: {
+    position: 'absolute', top: -40, right: 0,
+    width: 36, height: 36,
+    background: 'rgba(255,255,255,0.2)', color: '#fff',
+    border: 'none', borderRadius: '50%',
+    fontSize: 18, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  },
 
   // Status
   statusBadge: { padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500 },
