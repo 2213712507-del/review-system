@@ -47,11 +47,11 @@ function signTC3(secretId: string, secretKey: string, host: string, payload: str
   const kSigning = createHmac("sha256", kService).update("tc3_request").digest();
   const signature = createHmac("sha256", kSigning).update(stringToSign).digest("hex");
 
-  // 4. Authorization
+  // 4. Authorization（注意：是 Credential 不是 Credential）
   const authorization = [
-    "TC3-HMAC-SHA256",
-    `Credential=${secretId}/${credentialScope}`,
-    `SignedHeaders=content-type;host`,
+    "TC3-HMAC-SHA256 Credential",
+    `${secretId}/${credentialScope}`,
+    "SignedHeaders=content-type;host",
     `Signature=${signature}`,
   ].join(", ");
 
