@@ -89,14 +89,36 @@ export default function Dashboard() {
             {username || profile?.email || user?.email}
           </p>
         </div>
-        {isAdmin && (
+        <div style={styles.headerActions}>
           <button
-            style={styles.primaryBtn}
-            onClick={() => setShowCreate(true)}
+            style={styles.logoutBtn}
+            onClick={() => supabase.auth.signOut()}
           >
-            新建项目
+            退出登录
           </button>
-        )}
+          {isAdmin && (
+            <>
+              <button
+                style={styles.primaryBtn}
+                onClick={() => navigate('/admin')}
+              >
+                管理后台
+              </button>
+              <button
+                style={styles.primaryBtn}
+                onClick={() => navigate('/admin-users')}
+              >
+                账号管理
+              </button>
+              <button
+                style={styles.primaryBtn}
+                onClick={() => setShowCreate(true)}
+              >
+                新建项目
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {showCreate && (
