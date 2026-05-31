@@ -415,6 +415,7 @@ export default function ReviewTable() {
 function VideoPlayer({ item }) {
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  const videoRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -433,15 +434,29 @@ function VideoPlayer({ item }) {
     return () => { cancelled = true; };
   }, [item.video_key]);
 
+  async function handlePlay() {
+    const video = videoRef.current;
+    if (!video) return;
+    try {
+      if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+        await video.requestPictureInPicture();
+      }
+    } catch (e) {
+      // 用户可能手动退出画中画，忽略错误
+    }
+  }
+
   if (loading) return <div style={styles.videoLoading}>加载预览...</div>;
   if (!url) return <div style={styles.videoError}>加载失败</div>;
 
   return (
     <video
+      ref={videoRef}
       src={url}
       controls
       style={styles.video}
       preload="metadata"
+      onPlay={handlePlay}
     />
   );
 }
