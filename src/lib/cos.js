@@ -4,65 +4,69 @@ export const BUCKET = 'review-videos-1438185079';
 export const REGION = 'ap-beijing';
 export const BASE_URL = `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 
+/**
+ * 调用 Edge Function（统一错误处理）
+ */
 async function callFunction(body) {
   const { data, error } = await supabase.functions.invoke('cos-upload', { body });
   if (error) {
-    // 尝试提取 Edge Function 返回的详细错误
     const detail = error?.context?.statusText || error?.message || '请求失败';
     throw new Error(`Edge Function: ${detail}`);
   }
-  if (data?.error) {
-    throw new Error(data.error);
-  }
+  if (data?.error) throw new Error(data.error);
   return data;
 }
 
 /**
- * Upload file to COS（通过 Edge Function 代理上传）
+ * 上传文件到 COS（预签名 URL 直传，支持大文件）
+ * 步骤：
+ *   1. 调用 Edge Function 获取预签名 uploadUrl + auth
+ *   2. 前端直接用 PUT 上传到该 URL（带 Authorization header）
  */
 export async function uploadToCOS(file, key, onProgress) {
-  // 读取文件为 base64
-  const base64 = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      // 去掉 data:video/mp4;base64, 前缀
-      const base64Data = result.split(',')[1];
-      resolve(base64Data);
+  // ① 获取预签名 URL
+  const { uploadUrl, auth } = await callFunction({ key });
+  if (onProgress) onProgress(5);
+
+  // ② PUT 直传到 COS（支持任意大小文件）
+  const xhr = new XMLHttpRequest();
+  await new Promise((resolve, reject) => {
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        // 5% 已用掉（拿到URL），剩余 95% 给实际上传
+        onProgress(5 + Math.round((e.loaded / e.total) * 95));
+      }
     };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(xhr);
+    xhr.onerror = () => reject(xhr);
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Authorization', auth);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.send(file);
   });
-
-  if (onProgress) onProgress(10);
-
-  const { success, publicUrl, error: errMsg } = await callFunction({
-    key,
-    contentType: file.type,
-    fileBase64: base64,
-  });
-
-  if (!success) {
-    throw new Error(errMsg || '上传失败');
-  }
 
   if (onProgress) onProgress(100);
-
-  return { key, url: publicUrl };
+  return { key, url: `${BASE_URL}/${key}` };
 }
 
 /**
- * Get public URL for viewing video（bucket 设为公有读后无需签名）
+ * 获取视频观看 URL（通过 Edge Function 生成带签名的临时 URL）
  */
 export async function getPresignedUrl(key) {
-  return `${BASE_URL}/${key}`;
+  const { url } = await callFunction({ key, action: 'view' });
+  return url;
 }
 
 /**
- * Delete file from COS（通过 Edge Function 代理删除）
+ * 从 COS 删除文件（通过 Edge Function 代理）
  */
 export async function deleteFromCOS(key) {
-  const { success } = await callFunction({ key, action: 'delete' });
-  if (!success) throw new Error('删除失败');
+  const { auth, method } = await callFunction({ key, action: 'delete' });
+
+  const res = await fetch(`${BASE_URL}/${encodeURIComponent(key)}`, {
+    method,
+    headers: { Authorization: auth },
+  });
+  if (!res.ok) throw new Error(`删除失败: ${res.status}`);
   return { success: true };
 }
