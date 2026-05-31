@@ -594,6 +594,12 @@ export default function ReviewTable() {
                   {item.status === 'pending_upload' && (
                     <span style={{ fontSize: 12, color: '#aaa' }}>等待上传</span>
                   )}
+                  <button
+                    style={styles.deleteBtn}
+                    onClick={() => deleteItem(item.id)}
+                  >
+                    删除
+                  </button>
                 </div>
               )}
             </div>
@@ -1061,6 +1067,10 @@ const styles = {
   rejectBtn: {
     padding: '4px 12px', background: '#dc2626', color: '#fff',
     border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+  },
+  deleteBtn: {
+    padding: '4px 12px', background: 'transparent', border: '1px solid #fecaca',
+    borderRadius: 6, color: '#dc2626', fontSize: 12, cursor: 'pointer',
   },
   // Script text expand
   scriptExpand: {
