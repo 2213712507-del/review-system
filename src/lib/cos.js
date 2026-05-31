@@ -21,9 +21,15 @@ async function getCOSInstance() {
     throw new Error(error?.message || data?.error || '获取上传凭证失败');
   }
 
+  // 新版 COS SDK 必须通过 getAuthorization 回调
   cosInstance = new COS({
-    SecretId:  data.secretId,
-    SecretKey: data.secretKey,
+    getAuthorization: (options, callback) => {
+      callback({
+        TmpSecretId:  data.secretId,
+        TmpSecretKey: data.secretKey,
+        XCosSecurityToken: '',
+      });
+    },
   });
   keyExpiredAt = now + (data.expire || 7200);
 
