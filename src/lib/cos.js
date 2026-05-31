@@ -10,7 +10,12 @@ export const BASE_URL = `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 async function callFunction(body) {
   const { data, error } = await supabase.functions.invoke('cos-upload', { body });
   if (error) {
-    const detail = error?.context?.statusText || error?.message || '请求失败';
+    // Supabase Edge Function 错误可能包含 context 或直接是字符串
+    let detail = '请求失败';
+    if (typeof error === 'string') detail = error;
+    else if (error?.message) detail = error.message;
+    else if (error?.context?.statusText) detail = error.context.statusText;
+    else if (error?.error) detail = error.error;
     throw new Error(`Edge Function: ${detail}`);
   }
   if (data?.error) throw new Error(data.error);
@@ -37,8 +42,15 @@ export async function uploadToCOS(file, key, onProgress) {
         onProgress(5 + Math.round((e.loaded / e.total) * 95));
       }
     };
-    xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(xhr);
-    xhr.onerror = () => reject(xhr);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`COS上传失败: ${xhr.status} ${xhr.statusText}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('COS上传网络错误'));
+    xhr.ontimeout = () => reject(new Error('COS上传超时'));
     xhr.open('PUT', uploadUrl);
     xhr.setRequestHeader('Authorization', auth);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
