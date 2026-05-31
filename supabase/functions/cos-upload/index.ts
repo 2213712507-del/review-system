@@ -1,5 +1,5 @@
-// Supabase Edge Function: 生成 COS 预签名 URL（纯 v5 签名算法）
-// 严格按照腾讯云文档实现：https://cloud.tencent.com/document/product/436/7778
+// Supabase Edge Function: COS 预签名 URL
+// 使用腾讯云 COS 官方签名算法，通过 REST API 验证
 
 import { createHmac } from "https://deno.land/std@0.177.0/node/crypto.ts";
 
@@ -9,61 +9,62 @@ const BUCKET  = "review-videos-1438185079";
 const REGION   = "ap-beijing";
 const HOST     = `${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-// HMAC-SHA1 → hex
-function hmacSha1(key: string, data: string): string {
-  return createHmac("sha1", key).update(data).digest("hex");
+// ── 辅助函数 ─────────────────────────────────────────────────────────────────
+function hmac(key: string, msg: string): string {
+  return createHmac("sha1", key).update(msg).digest("hex");
 }
 
-// SHA1 → hex
-function sha1Hex(data: string): string {
-  return createHmac("sha1", "").update(data).digest("hex");
+function sha1(msg: string): string {
+  return createHmac("sha1", "").update(msg).digest("hex");
 }
 
-// ── COS v5 Authorization 签名 ────────────────────────────────────────────────
-function cosSign(method: string, pathname: string, headers: Record<string, string>): string {
+// ── COS v5 签名 ──────────────────────────────────────────────────────────────
+// 严格按 https://cloud.tencent.com/document/product/436/7778
+function cosAuth(
+  method: string,
+  pathname: string,
+  query: Record<string, string> = {},
+  headers: Record<string, string> = {},
+  expire = 600,
+): string {
   const now = Math.floor(Date.now() / 1000);
-  const exp = now + 600; // 10 分钟有效期
+  const exp = now + expire;
   const keyTime = `${now};${exp}`;
 
-  // 1. SignKey = HMAC-SHA1(SecretKey, KeyTime)
-  const signKey = hmacSha1(COS_SECRET_KEY, keyTime);
+  // SignKey
+  const signKey = hmac(COS_SECRET_KEY, keyTime);
 
-  // 2. 处理 HttpHeaders → FormatHeaders
-  // key 和 value 都 URL 编码，key 转小写
-  const headerKeys = Object.keys(headers).sort();
-  const headerList = headerKeys.join(";").toLowerCase();
-  const formatHeaders = headerKeys
-    .map(k => {
-      const keyEnc = encodeURIComponent(k).toLowerCase();
-      const valEnc = encodeURIComponent(headers[k]).toLowerCase();
-      return `${keyEnc}=${valEnc}`;
-    })
+  // HttpParameters
+  const paramKeys = Object.keys(query).sort();
+  const urlParamList = paramKeys.join(";").toLowerCase();
+  const httpParameters = paramKeys
+    .map(k => `${encodeURIComponent(k).toLowerCase()}=${encodeURIComponent(query[k])}`)
     .join("&");
 
-  // 3. HttpString
-  // 格式: HttpMethod\nUriPathname\nHttpParameters\nHttpHeaders\n
-  const uri = pathname.startsWith("/") ? pathname : "/" + pathname;
-  const httpMethod = method.toLowerCase();
-  const httpParameters = "";  // 空
-  const httpHeaders = formatHeaders;
-  const httpString = `${httpMethod}\n${uri}\n${httpParameters}\n${httpHeaders}\n`;
+  // HttpHeaders
+  const headerKeys = Object.keys(headers).sort();
+  const headerList = headerKeys.join(";").toLowerCase();
+  const httpHeaders = headerKeys
+    .map(k => `${encodeURIComponent(k).toLowerCase()}=${encodeURIComponent(headers[k])}`)
+    .join("&");
 
-  // 4. StringToSign
-  // 格式: sha1\nKeyTime\nSHA1(HttpString)\n
-  const sha1OfHttp = sha1Hex(httpString);
-  const stringToSign = `sha1\n${keyTime}\n${sha1OfHttp}\n`;
+  // HttpString: Method\nPath\nParameters\nHeaders\n
+  const path = pathname.startsWith("/") ? pathname : "/" + pathname;
+  const httpString = `${method.toLowerCase()}\n${path}\n${httpParameters}\n${httpHeaders}\n`;
 
-  // 5. Signature = HMAC-SHA1(SignKey, StringToSign)
-  const signature = hmacSha1(signKey, stringToSign);
+  // StringToSign
+  const stringToSign = `sha1\n${keyTime}\n${sha1(httpString)}\n`;
 
-  // 6. 组装 Authorization
+  // Signature
+  const signature = hmac(signKey, stringToSign);
+
   return [
     "q-sign-algorithm=sha1",
     `q-ak=${COS_SECRET_ID}`,
     `q-sign-time=${keyTime}`,
     `q-key-time=${keyTime}`,
     `q-header-list=${headerList}`,
-    "q-url-param-list=",
+    `q-url-param-list=${urlParamList}`,
     `q-signature=${signature}`,
   ].join("&");
 }
@@ -94,7 +95,7 @@ Deno.serve(async (req: Request) => {
 
     // ── 删除 ───────────────────────────────────────────────────────────
     if (action === "delete") {
-      const auth = cosSign("delete", key, { host: HOST });
+      const auth = cosAuth("delete", key, {}, { host: HOST });
       const res = await fetch(`https://${HOST}/${encodeURIComponent(key)}`, {
         method: "DELETE",
         headers: { Authorization: auth },
@@ -107,8 +108,7 @@ Deno.serve(async (req: Request) => {
 
     // ── 观看 ───────────────────────────────────────────────────────────
     if (action === "view") {
-      // view 用 GET 签名，24h 有效期
-      const auth = cosSign("get", key, { host: HOST });
+      const auth = cosAuth("get", key, {}, { host: HOST }, 86400);
       const url = `https://${HOST}/${encodeURIComponent(key)}?${auth}`;
       return new Response(
         JSON.stringify({ url }),
@@ -116,8 +116,8 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // ── 上传：返回 PUT 预签名 URL ──────────────────────────────────────
-    const auth = cosSign("put", key, { host: HOST });
+    // ── 上传：返回预签名 URL ──────────────────────────────────────────
+    const auth = cosAuth("put", key, {}, { host: HOST }, 600);
     const uploadUrl = `https://${HOST}/${encodeURIComponent(key)}`;
     return new Response(
       JSON.stringify({ uploadUrl, auth, method: "PUT" }),
@@ -125,7 +125,8 @@ Deno.serve(async (req: Request) => {
     );
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
+    console.error("Edge Function 错误:", err);
+    return new Response(JSON.stringify({ error: err.message || String(err) }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
