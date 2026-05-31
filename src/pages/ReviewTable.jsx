@@ -195,7 +195,7 @@ export default function ReviewTable() {
           latest_version: nextVersion,
           uploader_id: user.id,
           uploader_name: profile?.email || user.email,
-          status: 'pending_review',
+          status: 'in_review',
         })
         .eq('id', itemId);
 
@@ -266,16 +266,16 @@ export default function ReviewTable() {
 
   const statusLabels = {
     pending_upload: '待上传',
-    pending_review: '待审核',
-    revision_needed: '需修改',
+    in_review: '审核中',
     approved: '已通过',
+    rejected: '不通过',
   };
 
   const statusColors = {
     pending_upload: '#f5f5f5',
-    pending_review: '#fef3c7',
-    revision_needed: '#fee2e2',
+    in_review: '#fef3c7',
     approved: '#dcfce7',
+    rejected: '#fee2e2',
   };
 
   if (loading) return <div style={styles.loading}>加载中...</div>;
@@ -540,9 +540,9 @@ export default function ReviewTable() {
                     onChange={(e) => updateStatus(item.id, e.target.value)}
                   >
                     <option value="pending_upload">待上传</option>
-                    <option value="pending_review">待审核</option>
-                    <option value="revision_needed">需修改</option>
+                    <option value="in_review">审核中</option>
                     <option value="approved">已通过</option>
+                    <option value="rejected">不通过</option>
                   </select>
                   <button
                     style={styles.deleteBtn}

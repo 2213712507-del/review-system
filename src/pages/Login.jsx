@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -18,6 +19,19 @@ export default function Login() {
     setLoading(true);
 
     try {
+      if (mode === 'register') {
+        if (!username.trim()) {
+          setError('请输入用户名');
+          setLoading(false);
+          return;
+        }
+        if (!/^[\u4e00-\u9fa5]+$/.test(username.trim())) {
+          setError('用户名必须为纯中文字符');
+          setLoading(false);
+          return;
+        }
+      }
+
       if (mode === 'login') {
         const { error: loginError } = await supabase.auth.signInWithPassword({
           email,
@@ -42,17 +56,20 @@ export default function Login() {
         } else {
           if (data.user && data.user.identities?.length === 0) {
             setError('该邮箱已注册，请直接登录');
-          } else {
-            // 注册后直接登录（已关闭邮箱验证）
-            setMessage('注册成功！正在登录...');
-            const { error: loginError } = await supabase.auth.signInWithPassword({
-              email,
-              password,
+        } else {
+          // 注册成功后写入 profiles 表
+          if (data.user) {
+            await supabase.from('profiles').insert({
+              id: data.user.id,
+              email: email,
+              username: username.trim(),
+              role: 'uploader',
+              status: 'pending',
             });
-            if (!loginError) {
-              navigate('/');
-            }
           }
+          setMessage('注册成功！账号审核中，请等待管理员审核...');
+          setTimeout(() => navigate('/'), 2000);
+        }
         }
       }
     } catch (err) {
@@ -74,6 +91,19 @@ export default function Login() {
         {error && <div style={styles.error}>{error}</div>}
 
         <form onSubmit={handleSubmit} style={styles.form}>
+          {mode === 'register' && (
+            <div style={styles.field}>
+              <label style={styles.label}>用户名（中文）</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="请输入中文用户名（必填，唯一）"
+                style={styles.input}
+                required
+              />
+            </div>
+          )}
           <div style={styles.field}>
             <label style={styles.label}>邮箱</label>
             <input

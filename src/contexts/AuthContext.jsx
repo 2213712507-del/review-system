@@ -53,9 +53,12 @@ export function AuthProvider({ children }) {
   const isAdmin = profile?.role === 'admin';
   const isUploader = profile?.role === 'uploader';
   const isApproved = profile?.status === 'approved';
+  const username = profile?.username || '';
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAdmin, isUploader, isApproved }}>
+    <AuthContext.Provider value={{
+      user, profile, loading, isAdmin, isUploader, isApproved, username
+    }}>
       {children}
     </AuthContext.Provider>
   );
