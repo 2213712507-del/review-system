@@ -6,7 +6,14 @@ export const BASE_URL = `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 
 async function callFunction(body) {
   const { data, error } = await supabase.functions.invoke('cos-upload', { body });
-  if (error) throw new Error(error.message || '请求失败');
+  if (error) {
+    // 尝试提取 Edge Function 返回的详细错误
+    const detail = error?.context?.statusText || error?.message || '请求失败';
+    throw new Error(`Edge Function: ${detail}`);
+  }
+  if (data?.error) {
+    throw new Error(data.error);
+  }
   return data;
 }
 
