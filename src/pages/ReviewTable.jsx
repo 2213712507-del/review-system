@@ -471,7 +471,6 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const videoRef = useRef(null);
-  const [videoRatio, setVideoRatio] = useState(null);
 
   // 默认显示最新版本
   const selected = activeVersion || (versions.length > 0 ? versions[0] : null);
@@ -509,20 +508,10 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
     }
   }
 
-  // 读取视频实际比例
-  function handleMeta(e) {
-    const v = e.target;
-    if (v.videoWidth && v.videoHeight) {
-      setVideoRatio(v.videoWidth / v.videoHeight);
-    }
-  }
-
   if (loading) return <div style={styles.videoLoading}>加载预览...</div>;
   if (!url) return <div style={styles.videoError}>加载失败</div>;
 
-  const thumbStyle = videoRatio
-    ? { width: videoRatio > 1 ? 200 : 'auto', height: videoRatio > 1 ? 'auto' : 150, maxWidth: 200, maxHeight: 150, objectFit: 'contain', borderRadius: 8, background: '#000' }
-    : { maxWidth: 200, maxHeight: 150, width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: 8, background: '#000' };
+  const thumbStyle = { width: 200, height: 150, objectFit: 'cover', borderRadius: 8, background: '#000' };
 
   return (
     <>
@@ -534,7 +523,6 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
           style={{ ...thumbStyle, cursor: 'pointer' }}
           preload="metadata"
           onClick={handleExpand}
-          onLoadedMetadata={handleMeta}
           title="点击放大播放"
         />
 
