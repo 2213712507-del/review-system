@@ -17,11 +17,60 @@ export default function ReviewTable() {
   const [uploading, setUploading] = useState({});
   const [editingNote, setEditingNote] = useState(null);
   const [noteText, setNoteText] = useState('');
+  const [expandedScript, setExpandedScript] = useState({});
+  const [scriptTextCache, setScriptTextCache] = useState({});
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchData();
   }, [projectId, dateId]);
+
+  async function fetchData() {
+    setLoading(true);
+    try {
+      const [projRes, dateRes, itemsRes] = await Promise.all([
+        supabase.from('projects').select('*').eq('id', projectId).single(),
+        supabase.from('shoot_dates').select('*').eq('id', dateId).single(),
+        supabase.from('script_items').select('*').eq('date_id', dateId).order('script_no'),
+      ]);
+      setProject(projRes.data);
+      setShootDate(dateRes.data);
+      const itemsData = itemsRes.data || [];
+      setItems(itemsData);
+
+      // 查询所有条目的版本记录
+      if (itemsData.length > 0) {
+        const itemIds = itemsData.map((i) => i.id);
+        const { data: verData } = await supabase
+          .from('video_versions')
+          .select('*')
+          .in('item_id', itemIds)
+          .order('version_no', { ascending: false });
+        const map = {};
+        (verData || []).forEach((v) => {
+          if (!map[v.item_id]) map[v.item_id] = [];
+          map[v.item_id].push(v);
+        });
+        setVersionsMap(map);
+      } else {
+        setVersionsMap({});
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveScriptText(itemId) {
+    const text = scriptTextCache[itemId] || '';
+    try {
+      await supabase.from('script_items').update({ script_text: text }).eq('id', itemId);
+      setItems(items.map(i => i.id === itemId ? { ...i, script_text: text } : i));
+    } catch (err) {
+      alert('保存失败: ' + err.message);
+    }
+  }
 
   async function fetchData() {
     setLoading(true);
@@ -278,6 +327,7 @@ export default function ReviewTable() {
           <div style={styles.tableHeader}>
             <div style={styles.colNo}>脚本号</div>
             <div style={styles.colTitle}>标题</div>
+            <div style={styles.colScript}>脚本内容</div>
             <div style={styles.colVideo}>预审片</div>
             <div style={styles.colUploader}>上传者</div>
             <div style={styles.colTime}>上传时间</div>
@@ -292,6 +342,51 @@ export default function ReviewTable() {
             <div key={item.id} style={styles.tableRow}>
               <div style={styles.colNo}>{item.script_no}</div>
               <div style={styles.colTitle}>{item.title}</div>
+
+              {/* Script Text Column */}
+              <div style={styles.colScript}>
+                {expandedScript[item.id] ? (
+                  <div style={styles.scriptExpand}>
+                    <textarea
+                      style={styles.scriptTextarea}
+                      value={scriptTextCache[item.id] ?? (item.script_text || '')}
+                      onChange={(e) => {
+                        setScriptTextCache({ ...scriptTextCache, [item.id]: e.target.value });
+                      }}
+                      placeholder="输入脚本内容..."
+                      rows={4}
+                    />
+                    <div style={styles.noteActions}>
+                      <button
+                        style={styles.btnMini}
+                        onClick={() => handleSaveScriptText(item.id)}
+                      >
+                        保存
+                      </button>
+                      <button
+                        style={styles.btnMiniGhost}
+                        onClick={() => {
+                          const next = { ...expandedScript };
+                          delete next[item.id];
+                          setExpandedScript(next);
+                        }}
+                      >
+                        收起
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    style={styles.addNoteBtn}
+                    onClick={() => {
+                      setExpandedScript({ ...expandedScript, [item.id]: true });
+                      setScriptTextCache({ ...scriptTextCache, [item.id]: item.script_text || '' });
+                    }}
+                  >
+                    {item.script_text ? '展开脚本' : '+ 添加脚本'}
+                  </button>
+                )}
+              </div>
 
               {/* Video Column */}
               <div style={styles.colVideo}>
@@ -715,7 +810,8 @@ const styles = {
     alignItems: 'flex-start', fontSize: 13,
   },
   colNo: { width: 80, flexShrink: 0 },
-  colTitle: { width: 120, flexShrink: 0, fontWeight: 500 },
+  colTitle: { width: 100, flexShrink: 0, fontWeight: 500 },
+  colScript: { width: 100, flexShrink: 0 },
   colVideo: { width: 200, flexShrink: 0 },
   colUploader: { width: 90, flexShrink: 0, color: '#666', fontSize: 12, wordBreak: 'break-all' },
   colTime: { width: 120, flexShrink: 0, color: '#888', fontSize: 12 },
@@ -852,6 +948,22 @@ const styles = {
     padding: '4px 10px', background: 'transparent', border: '1px solid #fecaca',
     borderRadius: 6, color: '#dc2626', fontSize: 12, cursor: 'pointer',
   },
+  // Script text expand
+  scriptExpand: {
+    padding: '4px 0',
+  },
+  scriptTextarea: {
+    width: '100%',
+    padding: '8px',
+    border: '1px solid #e0e0e0',
+    borderRadius: 6,
+    fontSize: 13,
+    outline: 'none',
+    resize: 'vertical',
+    boxSizing: 'border-box',
+    minHeight: 80,
+  },
+
   btnMini: {
     padding: '4px 10px', background: '#1a1a1a', color: '#fff',
     border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer',
