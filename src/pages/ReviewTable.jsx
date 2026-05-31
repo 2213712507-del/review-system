@@ -487,6 +487,7 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
         const presigned = await getPresignedUrl(key);
         if (!cancelled) {
           setUrl(presigned);
+          setLoading(false);
         }
       } catch {
         if (!cancelled) setLoading(false);
@@ -496,12 +497,11 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
     return () => { cancelled = true; };
   }, [selected?.video_key || item.video_key]);
 
-  // 探测视频尺寸
+  // 探测视频尺寸（后台更新比例）
   function handleProbeMeta() {
     const v = probeRef.current;
     if (v && v.videoWidth && v.videoHeight) {
       setVidSize({ w: v.videoWidth, h: v.videoHeight });
-      setLoading(false);
     }
   }
 
