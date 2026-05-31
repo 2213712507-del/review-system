@@ -21,9 +21,9 @@ ALTER TABLE script_items ADD COLUMN IF NOT EXISTS uploader_id TEXT;
 -- (如果 profiles 表有主账号记录)
 DO $$ 
 DECLARE
-  master_id TEXT;
+  master_id uuid;
 BEGIN
-  SELECT id::TEXT INTO master_id FROM profiles WHERE role = 'admin' LIMIT 1;
+  SELECT id INTO master_id FROM profiles WHERE role = 'admin' LIMIT 1;
   IF master_id IS NOT NULL THEN
     UPDATE script_items SET uploader_id = master_id WHERE uploader_id IS NULL;
   END IF;
