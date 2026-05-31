@@ -296,7 +296,13 @@ export default function ReviewTable() {
               {/* Video Column */}
               <div style={styles.colVideo}>
                 {item.video_key ? (
-                  <VideoPlayer item={item} versions={versionsMap[item.id] || []} />
+                  <VideoPlayer
+                    item={item}
+                    versions={versionsMap[item.id] || []}
+                    onUploadNewVersion={(file) => handleVideoUpload(item.id, file)}
+                    uploading={uploading[item.id] !== undefined}
+                    uploadPercent={uploading[item.id]}
+                  />
                 ) : (
                   <div
                     style={styles.dropZone}
@@ -459,12 +465,13 @@ export default function ReviewTable() {
   );
 }
 
-function VideoPlayer({ item, versions }) {
+function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPercent }) {
   const [activeVersion, setActiveVersion] = useState(null);
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const videoRef = useRef(null);
+  const [videoRatio, setVideoRatio] = useState(null);
 
   // 默认显示最新版本
   const selected = activeVersion || (versions.length > 0 ? versions[0] : null);
@@ -502,8 +509,20 @@ function VideoPlayer({ item, versions }) {
     }
   }
 
+  // 读取视频实际比例
+  function handleMeta(e) {
+    const v = e.target;
+    if (v.videoWidth && v.videoHeight) {
+      setVideoRatio(v.videoWidth / v.videoHeight);
+    }
+  }
+
   if (loading) return <div style={styles.videoLoading}>加载预览...</div>;
   if (!url) return <div style={styles.videoError}>加载失败</div>;
+
+  const thumbStyle = videoRatio
+    ? { width: videoRatio > 1 ? 200 : 'auto', height: videoRatio > 1 ? 'auto' : 150, maxWidth: 200, maxHeight: 150, objectFit: 'contain', borderRadius: 8, background: '#000' }
+    : { maxWidth: 200, maxHeight: 150, width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: 8, background: '#000' };
 
   return (
     <>
@@ -512,28 +531,50 @@ function VideoPlayer({ item, versions }) {
         <video
           src={url}
           muted
-          style={{ ...styles.video, cursor: 'pointer' }}
+          style={{ ...thumbStyle, cursor: 'pointer' }}
           preload="metadata"
           onClick={handleExpand}
+          onLoadedMetadata={handleMeta}
           title="点击放大播放"
         />
 
-        {/* 版本切换 */}
-        {versions.length > 1 && (
-          <select
-            style={styles.versionSelect}
-            value={selected?.version_no || ''}
-            onChange={(e) => {
-              const v = versions.find((v) => v.version_no === Number(e.target.value));
-              if (v) setActiveVersion(v);
-            }}
-          >
-            {versions.map((v) => (
-              <option key={v.id} value={v.version_no}>
-                v{v.version_no}
-              </option>
-            ))}
-          </select>
+        {/* 版本切换 + 上传新版本 */}
+        <div style={styles.versionRow}>
+          {versions.length >= 1 && (
+            <select
+              style={styles.versionSelect}
+              value={selected?.version_no || ''}
+              onChange={(e) => {
+                const v = versions.find((v) => v.version_no === Number(e.target.value));
+                if (v) setActiveVersion(v);
+              }}
+            >
+              {versions.map((v) => (
+                <option key={v.id} value={v.version_no}>
+                  v{v.version_no}
+                </option>
+              ))}
+            </select>
+          )}
+          <label style={styles.uploadNewBtn}>
+            上传新版
+            <input
+              type="file"
+              accept="video/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                if (e.target.files[0]) onUploadNewVersion(e.target.files[0]);
+              }}
+            />
+          </label>
+        </div>
+
+        {/* 上传进度 */}
+        {uploading && (
+          <div style={styles.miniProgress}>
+            <div style={{ ...styles.miniProgressFill, width: `${uploadPercent}%` }} />
+            <span style={styles.miniProgressText}>{Math.round(uploadPercent)}%</span>
+          </div>
         )}
       </div>
 
@@ -650,8 +691,8 @@ const styles = {
   colNo: { width: 80, flexShrink: 0 },
   colTitle: { width: 120, flexShrink: 0, fontWeight: 500 },
   colVideo: { width: 200, flexShrink: 0 },
-  colUploader: { width: 100, flexShrink: 0, color: '#666' },
-  colTime: { width: 110, flexShrink: 0, color: '#888', fontSize: 12 },
+  colUploader: { width: 90, flexShrink: 0, color: '#666', fontSize: 12, wordBreak: 'break-all' },
+  colTime: { width: 120, flexShrink: 0, color: '#888', fontSize: 12 },
   colStatus: { width: 80, flexShrink: 0 },
   colNotes: { flex: 1, minWidth: 200 },
   colFinal: { width: 130, flexShrink: 0 },
@@ -676,15 +717,34 @@ const styles = {
     fontSize: 11, color: '#888',
   },
   video: { maxWidth: 200, maxHeight: 150, width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: 8, background: '#000' },
-  videoCell: { display: 'flex', flexDirection: 'column', gap: 6 },
+  videoCell: { display: 'flex', flexDirection: 'column', gap: 4 },
   videoLoading: { fontSize: 12, color: '#aaa', padding: '40px 0', textAlign: 'center' },
   videoError: { fontSize: 12, color: '#dc2626', padding: '40px 0', textAlign: 'center' },
 
-  // Version select
+  // Version row
+  versionRow: {
+    display: 'flex', gap: 4, alignItems: 'center',
+  },
   versionSelect: {
-    width: '100%', padding: '2px 6px', border: '1px solid #e0e0e0',
+    flex: 1, padding: '2px 4px', border: '1px solid #e0e0e0',
     borderRadius: 4, fontSize: 11, color: '#888', background: '#fff',
     outline: 'none',
+  },
+  uploadNewBtn: {
+    padding: '2px 6px', background: 'transparent', border: '1px solid #e0e0e0',
+    borderRadius: 4, fontSize: 10, color: '#888', cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  miniProgress: {
+    width: '100%', height: 4, background: '#eee', borderRadius: 2,
+    position: 'relative', overflow: 'hidden',
+  },
+  miniProgressFill: {
+    height: '100%', background: '#1a1a1a', borderRadius: 2, transition: 'width 0.3s',
+  },
+  miniProgressText: {
+    position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
+    fontSize: 10, color: '#888',
   },
   versionSelectOverlay: {
     padding: '4px 10px', border: '1px solid rgba(255,255,255,0.3)',
