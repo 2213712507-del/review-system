@@ -477,7 +477,9 @@ export default function ReviewTable() {
                     background: statusColors[item.status] || '#f5f5f5',
                   }}
                 >
-                  {statusLabels[item.status] || item.status}
+                  {item.video_key
+                    ? statusLabels[item.status] || item.status
+                    : '待上传'}
                 </span>
               </div>
 
@@ -557,22 +559,41 @@ export default function ReviewTable() {
               {/* Admin Actions */}
               {isAdmin && (
                 <div style={styles.colAction}>
-                  <select
-                    style={styles.statusSelect}
-                    value={item.status}
-                    onChange={(e) => updateStatus(item.id, e.target.value)}
-                  >
-                    <option value="pending_upload">待上传</option>
-                    <option value="in_review">审核中</option>
-                    <option value="approved">已通过</option>
-                    <option value="rejected">不通过</option>
-                  </select>
-                  <button
-                    style={styles.deleteBtn}
-                    onClick={() => deleteItem(item.id)}
-                  >
-                    删除
-                  </button>
+                  {item.status === 'in_review' && (
+                    <>
+                      <button
+                        style={styles.approveBtn}
+                        onClick={() => updateStatus(item.id, 'approved')}
+                      >
+                        通过
+                      </button>
+                      <button
+                        style={styles.rejectBtn}
+                        onClick={() => updateStatus(item.id, 'rejected')}
+                      >
+                        不通过
+                      </button>
+                    </>
+                  )}
+                  {item.status === 'approved' && (
+                    <button
+                      style={styles.rejectBtn}
+                      onClick={() => updateStatus(item.id, 'rejected')}
+                    >
+                      不通过
+                    </button>
+                  )}
+                  {item.status === 'rejected' && (
+                    <button
+                      style={styles.approveBtn}
+                      onClick={() => updateStatus(item.id, 'approved')}
+                    >
+                      通过
+                    </button>
+                  )}
+                  {item.status === 'pending_upload' && (
+                    <span style={{ fontSize: 12, color: '#aaa' }}>等待上传</span>
+                  )}
                 </div>
               )}
             </div>
@@ -1033,13 +1054,13 @@ const styles = {
   },
 
   // Actions
-  statusSelect: {
-    padding: '4px 8px', border: '1px solid #e0e0e0', borderRadius: 6,
-    fontSize: 12, outline: 'none', background: '#fff',
+  approveBtn: {
+    padding: '4px 12px', background: '#16a34a', color: '#fff',
+    border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer',
   },
-  deleteBtn: {
-    padding: '4px 10px', background: 'transparent', border: '1px solid #fecaca',
-    borderRadius: 6, color: '#dc2626', fontSize: 12, cursor: 'pointer',
+  rejectBtn: {
+    padding: '4px 12px', background: '#dc2626', color: '#fff',
+    border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer',
   },
   // Script text expand
   scriptExpand: {
