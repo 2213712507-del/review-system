@@ -22,29 +22,8 @@ export default function Dashboard() {
       if (!isAdmin) {
         query = query.eq('created_by', user.id);
       }
-      const { data: projData } = await query;
-      const projectsData = projData || [];
-
-      // 获取每个项目的脚本统计
-      const projectIds = projectsData.map((p) => p.id);
-      if (projectIds.length > 0) {
-        const { data: statsData } = await supabase
-          .from('script_items')
-          .select('project_id, status')
-          .in('project_id', projectIds);
-
-        const stats = {};
-        for (const item of statsData || []) {
-          if (!stats[item.project_id]) stats[item.project_id] = { uploaded: 0, in_review: 0, approved: 0, rejected: 0 };
-          if (item.video_key) stats[item.project_id].uploaded++;
-          if (item.status === 'in_review') stats[item.project_id].in_review++;
-          if (item.status === 'approved') stats[item.project_id].approved++;
-          if (item.status === 'rejected') stats[item.project_id].rejected++;
-        }
-        setProjects(projectsData.map((p) => ({ ...p, stats: stats[p.id] || { uploaded: 0, in_review: 0, approved: 0, rejected: 0 } })));
-      } else {
-        setProjects(projectsData);
-      }
+      const { data } = await query;
+      setProjects(data || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -84,19 +63,35 @@ export default function Dashboard() {
     <div style={styles.container}>
       <div style={styles.header}>
         <div>
-          <h1 style={styles.title}>项目概览</h1>
+          <h1 style={styles.title}>项目管理</h1>
           <p style={styles.subtitle}>
-            {username || profile?.email || user?.email}
+            {isAdmin ? '管理员' : '上传者'} · {profile?.email || user?.email}
           </p>
         </div>
-        {isAdmin && (
+        <div style={styles.headerActions}>
           <button
-            style={styles.primaryBtn}
-            onClick={() => setShowCreate(true)}
+            style={styles.logoutBtn}
+            onClick={() => supabase.auth.signOut()}
           >
-            新建项目
+            退出登录
           </button>
-        )}
+          {isAdmin && (
+            <>
+              <button
+                style={styles.primaryBtn}
+                onClick={() => navigate('/admin')}
+              >
+                管理后台
+              </button>
+              <button
+                style={styles.primaryBtn}
+                onClick={() => setShowCreate(true)}
+              >
+                新建项目
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {showCreate && (
@@ -131,22 +126,6 @@ export default function Dashboard() {
                 <p style={styles.cardMeta}>
                   创建于 {new Date(p.created_at).toLocaleDateString('zh-CN')}
                 </p>
-                {p.stats && (
-                  <div style={styles.cardStats}>
-                    <span style={styles.statItem}>
-                      已上传 <b>{p.stats.uploaded}</b>
-                    </span>
-                    <span style={styles.statItem}>
-                      审核中 <b>{p.stats.in_review}</b>
-                    </span>
-                    <span style={{ ...styles.statItem, color: '#16a34a' }}>
-                      已通过 <b>{p.stats.approved}</b>
-                    </span>
-                    <span style={{ ...styles.statItem, color: '#dc2626' }}>
-                      不通过 <b>{p.stats.rejected}</b>
-                    </span>
-                  </div>
-                )}
               </div>
               {isAdmin && (
                 <button
@@ -281,16 +260,6 @@ const styles = {
     fontSize: 12,
     color: '#aaa',
     margin: '4px 0 0 0',
-  },
-  cardStats: {
-    display: 'flex',
-    gap: 16,
-    marginTop: 10,
-  },
-  statItem: {
-    fontSize: 12,
-    color: '#666',
-    whiteSpace: 'nowrap',
   },
   deleteBtn: {
     padding: '6px 12px',

@@ -5,8 +5,6 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import ProjectDetail from './pages/ProjectDetail';
 import ReviewTable from './pages/ReviewTable';
-import UploadPage from './pages/UploadPage';
-import ReviewPage from './pages/ReviewPage';
 import Admin from './pages/Admin';
 import AdminUsers from './pages/AdminUsers';
 
@@ -54,8 +52,6 @@ function App() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/project/:id" element={<ProjectDetail />} />
                     <Route path="/project/:projectId/date/:dateId" element={<ReviewTable />} />
-                    <Route path="/upload" element={<UploadPage />} />
-                    <Route path="/review" element={<ReviewPage />} />
                     <Route path="/admin" element={<Admin />} />
                     <Route path="/admin-users" element={<AdminUsers />} />
                   </Routes>
