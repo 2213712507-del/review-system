@@ -22,12 +22,8 @@ async function getCOSInstance() {
   }
 
   cosInstance = new COS({
-    getAuthorization: (options, callback) => {
-      callback({
-        TmpSecretId:  data.secretId,
-        TmpSecretKey: data.secretKey,
-      });
-    },
+    SecretId:  data.secretId,
+    SecretKey: data.secretKey,
   });
   keyExpiredAt = now + (data.expire || 7200);
 
