@@ -547,7 +547,7 @@ const styles = {
     position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
     fontSize: 11, color: '#888',
   },
-  video: { width: 180, height: 100, objectFit: 'cover', borderRadius: 8, background: '#000' },
+  video: { maxWidth: 200, maxHeight: 150, width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: 8, background: '#000' },
   videoLoading: { fontSize: 12, color: '#aaa', padding: '40px 0', textAlign: 'center' },
   videoError: { fontSize: 12, color: '#dc2626', padding: '40px 0', textAlign: 'center' },
 
