@@ -10,6 +10,7 @@ export default function ReviewTable() {
   const [project, setProject] = useState(null);
   const [shootDate, setShootDate] = useState(null);
   const [items, setItems] = useState([]);
+  const [versionsMap, setVersionsMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState({ script_no: '', title: '' });
@@ -32,7 +33,26 @@ export default function ReviewTable() {
       ]);
       setProject(projRes.data);
       setShootDate(dateRes.data);
-      setItems(itemsRes.data || []);
+      const itemsData = itemsRes.data || [];
+      setItems(itemsData);
+
+      // 查询所有条目的版本记录
+      if (itemsData.length > 0) {
+        const itemIds = itemsData.map((i) => i.id);
+        const { data: verData } = await supabase
+          .from('video_versions')
+          .select('*')
+          .in('item_id', itemIds)
+          .order('version_no', { ascending: false });
+        const map = {};
+        (verData || []).forEach((v) => {
+          if (!map[v.item_id]) map[v.item_id] = [];
+          map[v.item_id].push(v);
+        });
+        setVersionsMap(map);
+      } else {
+        setVersionsMap({});
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -83,20 +103,47 @@ export default function ReviewTable() {
       return;
     }
 
-    const key = `${projectId}/${dateId}/${itemId}/${Date.now()}_${file.name}`;
-
     setUploading((prev) => ({ ...prev, [itemId]: 0 }));
 
     try {
+      // 查询当前最大版本号
+      const { data: versions } = await supabase
+        .from('video_versions')
+        .select('version_no')
+        .eq('item_id', itemId)
+        .order('version_no', { ascending: false })
+        .limit(1);
+
+      const nextVersion = versions?.length > 0 ? versions[0].version_no + 1 : 1;
+      const key = `${projectId}/${dateId}/${itemId}/v${nextVersion}/${Date.now()}_${file.name}`;
+
       const result = await uploadToCOS(file, key, (percent) => {
         setUploading((prev) => ({ ...prev, [itemId]: percent }));
       });
 
+      // 创建版本记录
+      const { error: verErr } = await supabase
+        .from('video_versions')
+        .insert({
+          item_id: itemId,
+          version_no: nextVersion,
+          video_key: result.key,
+          video_url: result.url,
+          file_name: file.name,
+          file_size: file.size,
+          uploader_id: user.id,
+          uploader_name: profile?.email || user.email,
+        });
+
+      if (verErr) throw verErr;
+
+      // 更新 script_items（保留旧字段兼容，同时指向最新版本）
       const { error } = await supabase
         .from('script_items')
         .update({
           video_key: result.key,
           video_url: result.url,
+          latest_version: nextVersion,
           uploader_id: user.id,
           uploader_name: profile?.email || user.email,
           status: 'pending_review',
@@ -249,7 +296,7 @@ export default function ReviewTable() {
               {/* Video Column */}
               <div style={styles.colVideo}>
                 {item.video_key ? (
-                  <VideoPlayer item={item} />
+                  <VideoPlayer item={item} versions={versionsMap[item.id] || []} />
                 ) : (
                   <div
                     style={styles.dropZone}
@@ -412,17 +459,23 @@ export default function ReviewTable() {
   );
 }
 
-function VideoPlayer({ item }) {
+function VideoPlayer({ item, versions }) {
+  const [activeVersion, setActiveVersion] = useState(null);
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const videoRef = useRef(null);
 
+  // 默认显示最新版本
+  const selected = activeVersion || (versions.length > 0 ? versions[0] : null);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      setLoading(true);
       try {
-        const presigned = await getPresignedUrl(item.video_key);
+        const key = selected?.video_key || item.video_key;
+        const presigned = await getPresignedUrl(key);
         if (!cancelled) {
           setUrl(presigned);
           setLoading(false);
@@ -433,7 +486,7 @@ function VideoPlayer({ item }) {
     }
     load();
     return () => { cancelled = true; };
-  }, [item.video_key]);
+  }, [selected?.video_key || item.video_key]);
 
   function handleExpand(e) {
     e.preventDefault();
@@ -454,21 +507,59 @@ function VideoPlayer({ item }) {
 
   return (
     <>
-      {/* 表格中的缩略图 */}
-      <video
-        src={url}
-        muted
-        style={{ ...styles.video, cursor: 'pointer' }}
-        preload="metadata"
-        onClick={handleExpand}
-        title="点击放大播放"
-      />
+      <div style={styles.videoCell}>
+        {/* 缩略图 */}
+        <video
+          src={url}
+          muted
+          style={{ ...styles.video, cursor: 'pointer' }}
+          preload="metadata"
+          onClick={handleExpand}
+          title="点击放大播放"
+        />
+
+        {/* 版本切换 */}
+        {versions.length > 1 && (
+          <select
+            style={styles.versionSelect}
+            value={selected?.version_no || ''}
+            onChange={(e) => {
+              const v = versions.find((v) => v.version_no === Number(e.target.value));
+              if (v) setActiveVersion(v);
+            }}
+          >
+            {versions.map((v) => (
+              <option key={v.id} value={v.version_no}>
+                v{v.version_no}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
 
       {/* 大屏播放层 */}
       {expanded && (
         <div style={styles.overlay} onClick={handleClose}>
           <div style={styles.overlayContent} onClick={(e) => e.stopPropagation()}>
-            <button style={styles.closeBtn} onClick={handleClose}>✕</button>
+            <div style={styles.overlayHeader}>
+              {versions.length > 1 && (
+                <select
+                  style={styles.versionSelectOverlay}
+                  value={selected?.version_no || ''}
+                  onChange={(e) => {
+                    const v = versions.find((v) => v.version_no === Number(e.target.value));
+                    if (v) setActiveVersion(v);
+                  }}
+                >
+                  {versions.map((v) => (
+                    <option key={v.id} value={v.version_no}>
+                      v{v.version_no}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button style={styles.closeBtn} onClick={handleClose}>✕</button>
+            </div>
             <video
               ref={videoRef}
               src={url}
@@ -585,8 +676,21 @@ const styles = {
     fontSize: 11, color: '#888',
   },
   video: { maxWidth: 200, maxHeight: 150, width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: 8, background: '#000' },
+  videoCell: { display: 'flex', flexDirection: 'column', gap: 6 },
   videoLoading: { fontSize: 12, color: '#aaa', padding: '40px 0', textAlign: 'center' },
   videoError: { fontSize: 12, color: '#dc2626', padding: '40px 0', textAlign: 'center' },
+
+  // Version select
+  versionSelect: {
+    width: '100%', padding: '2px 6px', border: '1px solid #e0e0e0',
+    borderRadius: 4, fontSize: 11, color: '#888', background: '#fff',
+    outline: 'none',
+  },
+  versionSelectOverlay: {
+    padding: '4px 10px', border: '1px solid rgba(255,255,255,0.3)',
+    borderRadius: 6, fontSize: 13, color: '#fff', background: 'rgba(255,255,255,0.15)',
+    outline: 'none',
+  },
 
   // Expanded video overlay
   overlay: {
@@ -598,20 +702,24 @@ const styles = {
   overlayContent: {
     position: 'relative',
     width: '90vw', maxWidth: 1200, maxHeight: '90vh',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
     cursor: 'default',
+  },
+  overlayHeader: {
+    width: '100%', display: 'flex', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: 12, gap: 12,
   },
   expandedVideo: {
     width: '100%', maxHeight: '90vh', objectFit: 'contain',
     borderRadius: 8, background: '#000',
   },
   closeBtn: {
-    position: 'absolute', top: -40, right: 0,
     width: 36, height: 36,
     background: 'rgba(255,255,255,0.2)', color: '#fff',
     border: 'none', borderRadius: '50%',
     fontSize: 18, cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
   },
 
   // Status
