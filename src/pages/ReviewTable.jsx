@@ -470,7 +470,9 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
+  const [vidSize, setVidSize] = useState(null); // { w, h }
   const videoRef = useRef(null);
+  const probeRef = useRef(null);
 
   // 默认显示最新版本
   const selected = activeVersion || (versions.length > 0 ? versions[0] : null);
@@ -479,12 +481,12 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
     let cancelled = false;
     async function load() {
       setLoading(true);
+      setVidSize(null);
       try {
         const key = selected?.video_key || item.video_key;
         const presigned = await getPresignedUrl(key);
         if (!cancelled) {
           setUrl(presigned);
-          setLoading(false);
         }
       } catch {
         if (!cancelled) setLoading(false);
@@ -493,6 +495,15 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
     load();
     return () => { cancelled = true; };
   }, [selected?.video_key || item.video_key]);
+
+  // 探测视频尺寸
+  function handleProbeMeta() {
+    const v = probeRef.current;
+    if (v && v.videoWidth && v.videoHeight) {
+      setVidSize({ w: v.videoWidth, h: v.videoHeight });
+      setLoading(false);
+    }
+  }
 
   function handleExpand(e) {
     e.preventDefault();
@@ -511,10 +522,37 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
   if (loading) return <div style={styles.videoLoading}>加载预览...</div>;
   if (!url) return <div style={styles.videoError}>加载失败</div>;
 
-  const thumbStyle = { width: 200, height: 150, objectFit: 'cover', borderRadius: 8, background: '#000' };
+  // 按视频比例计算缩略图容器尺寸（最大 200x150）
+  const MAX_W = 200, MAX_H = 150;
+  let thumbW = MAX_W, thumbH = MAX_H;
+  if (vidSize) {
+    const ratio = vidSize.w / vidSize.h;
+    if (ratio > MAX_W / MAX_H) {
+      // 更宽：限制宽度
+      thumbW = MAX_W;
+      thumbH = Math.round(MAX_W / ratio);
+    } else {
+      // 更高：限制高度
+      thumbH = MAX_H;
+      thumbW = Math.round(MAX_H * ratio);
+    }
+  }
+
+  const thumbStyle = { width: thumbW, height: thumbH, objectFit: 'contain', borderRadius: 8, background: '#000' };
 
   return (
     <>
+      {/* 隐藏探测器：获取视频真实尺寸 */}
+      {!vidSize && (
+        <video
+          ref={probeRef}
+          src={url}
+          style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+          preload="metadata"
+          onLoadedMetadata={handleProbeMeta}
+        />
+      )}
+
       <div style={styles.videoCell}>
         {/* 缩略图 */}
         <video
