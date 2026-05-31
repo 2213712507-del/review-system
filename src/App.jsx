@@ -1,10 +1,12 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './pages/Login';
+import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import ProjectDetail from './pages/ProjectDetail';
 import ReviewTable from './pages/ReviewTable';
 import Admin from './pages/Admin';
+import AdminUsers from './pages/AdminUsers';
 
 function ProtectedRoute({ children, requireAdmin = false }) {
   const { user, loading, isAdmin, isApproved } = useAuth();
@@ -42,34 +44,18 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
-            path="/"
+            path="/*"
             element={
               <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/project/:id"
-            element={
-              <ProtectedRoute>
-                <ProjectDetail />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/project/:projectId/date/:dateId"
-            element={
-              <ProtectedRoute>
-                <ReviewTable />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              <ProtectedRoute requireAdmin>
-                <Admin />
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/project/:id" element={<ProjectDetail />} />
+                    <Route path="/project/:projectId/date/:dateId" element={<ReviewTable />} />
+                    <Route path="/admin" element={<Admin />} />
+                    <Route path="/admin-users" element={<AdminUsers />} />
+                  </Routes>
+                </Layout>
               </ProtectedRoute>
             }
           />
