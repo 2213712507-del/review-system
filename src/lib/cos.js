@@ -16,9 +16,14 @@ async function callFunction(body) {
     else if (error?.message) detail = error.message;
     else if (error?.context?.statusText) detail = error.context.statusText;
     else if (error?.error) detail = error.error;
+    console.error('Edge Function 错误:', error);
     throw new Error(`Edge Function: ${detail}`);
   }
-  if (data?.error) throw new Error(data.error);
+  if (data?.error) {
+    console.error('Edge Function 返回错误:', data.error);
+    throw new Error(data.error);
+  }
+  console.log('Edge Function 返回:', data);
   return data;
 }
 

@@ -106,7 +106,9 @@ export default function ReviewTable() {
       if (error) throw error;
       await fetchData();
     } catch (err) {
-      alert('上传失败: ' + err.message);
+      const msg = err?.message || err?.toString?.() || JSON.stringify(err) || '未知错误';
+      console.error('上传错误详情:', err);
+      alert('上传失败: ' + msg);
     } finally {
       setUploading((prev) => {
         const next = { ...prev };
