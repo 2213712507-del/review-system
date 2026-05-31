@@ -22,12 +22,15 @@ async function getCOSInstance() {
   }
 
   // 新版 COS SDK 必须通过 getAuthorization 回调
+  // 且需要 SecurityToken、ExpiredTime（10位时间戳）
+  const expiredTime = now + (data.expire || 7200);
   cosInstance = new COS({
     getAuthorization: (options, callback) => {
       callback({
         TmpSecretId:  data.secretId,
         TmpSecretKey: data.secretKey,
-        XCosSecurityToken: '',
+        SecurityToken: 'none',  // 非空即可（真实密钥不需要 token）
+        ExpiredTime:   expiredTime,
       });
     },
   });
