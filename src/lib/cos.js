@@ -11,37 +11,37 @@ async function callFunction(body) {
 }
 
 /**
- * Upload file to COS（预签名 URL，签名已包含在 URL 中）
+ * Upload file to COS（通过 Edge Function 代理上传）
  */
 export async function uploadToCOS(file, key, onProgress) {
-  const { uploadUrl, publicUrl } = await callFunction({
+  // 读取文件为 base64
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      // 去掉 data:video/mp4;base64, 前缀
+      const base64Data = result.split(',')[1];
+      resolve(base64Data);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  if (onProgress) onProgress(10);
+
+  const { success, publicUrl, error: errMsg } = await callFunction({
     key,
     contentType: file.type,
+    fileBase64: base64,
   });
 
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+  if (!success) {
+    throw new Error(errMsg || '上传失败');
+  }
 
-    xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable && onProgress) {
-        onProgress(Math.round((e.loaded / e.total) * 100));
-      }
-    });
+  if (onProgress) onProgress(100);
 
-    xhr.addEventListener('load', () => {
-      if (xhr.status === 200) {
-        resolve({ key, url: publicUrl });
-      } else {
-        reject(new Error(`上传失败: ${xhr.status}`));
-      }
-    });
-
-    xhr.addEventListener('error', () => reject(new Error('网络错误')));
-
-    xhr.open('PUT', uploadUrl);
-    xhr.setRequestHeader('Content-Type', file.type);
-    xhr.send(file);
-  });
+  return { key, url: publicUrl };
 }
 
 /**
@@ -52,16 +52,10 @@ export async function getPresignedUrl(key) {
 }
 
 /**
- * Delete file from COS
+ * Delete file from COS（通过 Edge Function 代理删除）
  */
 export async function deleteFromCOS(key) {
-  const { deleteUrl, authorization } = await callFunction({ key, action: 'delete' });
-
-  const delRes = await fetch(deleteUrl, {
-    method: 'DELETE',
-    headers: { 'Authorization': authorization },
-  });
-
-  if (!delRes.ok) throw new Error('删除失败');
+  const { success } = await callFunction({ key, action: 'delete' });
+  if (!success) throw new Error('删除失败');
   return { success: true };
 }
