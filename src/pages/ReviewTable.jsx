@@ -247,6 +247,7 @@ export default function ReviewTable() {
       const item = items.find((i) => i.id === itemId);
       const notes = item.notes || [];
       const newNote = {
+        id: Date.now().toString() + '_' + user.id,
         text: noteText.trim(),
         created_by: user.id,
         created_by_name: profile?.email || user.email,
@@ -261,6 +262,32 @@ export default function ReviewTable() {
       await fetchData();
     } catch (err) {
       alert('保存失败: ' + err.message);
+    }
+  }
+
+  async function deleteNote(itemId, noteId) {
+    if (!confirm('确定删除这条意见？')) return;
+    try {
+      const item = items.find((i) => i.id === itemId);
+      const notes = (item.notes || []).filter((n) => n.id !== noteId);
+      await supabase.from('script_items').update({ notes }).eq('id', itemId);
+      await fetchData();
+    } catch (err) {
+      alert('删除失败: ' + err.message);
+    }
+  }
+
+  async function updateNote(itemId, noteId, newText) {
+    if (!newText.trim()) return;
+    try {
+      const item = items.find((i) => i.id === itemId);
+      const notes = (item.notes || []).map((n) =>
+        n.id === noteId ? { ...n, text: newText.trim(), edited_at: new Date().toISOString() } : n
+      );
+      await supabase.from('script_items').update({ notes }).eq('id', itemId);
+      await fetchData();
+    } catch (err) {
+      alert('编辑失败: ' + err.message);
     }
   }
 
@@ -457,18 +484,14 @@ export default function ReviewTable() {
               {/* Notes Column */}
               <div style={styles.colNotes}>
                 {(item.notes || []).map((note, i) => (
-                  <div key={i} style={styles.noteItem}>
-                    <span style={styles.noteAuthor}>{note.created_by_name}</span>
-                    <span style={styles.noteTime}>
-                      {new Date(note.created_at).toLocaleString('zh-CN', {
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                    <p style={styles.noteText}>{note.text}</p>
-                  </div>
+                  <NoteItem
+                    key={note.id || i}
+                    note={note}
+                    isOwn={note.created_by === user.id}
+                    isAdmin={isAdmin}
+                    onDelete={() => deleteNote(item.id, note.id)}
+                    onUpdate={(newText) => updateNote(item.id, note.id, newText)}
+                  />
                 ))}
                 {isAdmin && (
                   <div>
@@ -736,6 +759,72 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
   );
 }
 
+function NoteItem({ note, isOwn, isAdmin, onDelete, onUpdate }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(note.text);
+  const canModify = isOwn || isAdmin;
+
+  function handleSave() {
+    if (text.trim() && text.trim() !== note.text) {
+      onUpdate(text);
+    }
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div style={styles.noteItem}>
+        <textarea
+          style={styles.noteTextarea}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={2}
+          autoFocus
+        />
+        <div style={styles.noteActions}>
+          <button style={styles.btnMini} onClick={handleSave}>保存</button>
+          <button style={styles.btnMiniGhost} onClick={() => { setEditing(false); setText(note.text); }}>取消</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.noteItem}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <span style={styles.noteAuthor}>{note.created_by_name}</span>
+          <span style={styles.noteTime}>
+            {new Date(note.created_at).toLocaleString('zh-CN', {
+              month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+            })}
+            {note.edited_at ? ' (已编辑)' : ''}
+          </span>
+        </div>
+        {canModify && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              style={styles.noteActionBtn}
+              onClick={() => { setEditing(true); setText(note.text); }}
+              title="编辑"
+            >
+              编辑
+            </button>
+            <button
+              style={{ ...styles.noteActionBtn, color: '#dc2626' }}
+              onClick={onDelete}
+              title="删除"
+            >
+              删除
+            </button>
+          </div>
+        )}
+      </div>
+      <p style={styles.noteText}>{note.text}</p>
+    </div>
+  );
+}
+
 function EditableLink({ onSave }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState('');
@@ -924,6 +1013,10 @@ const styles = {
   addNoteBtn: {
     padding: '6px 12px', background: 'transparent', border: '1px solid #e0e0e0',
     borderRadius: 6, fontSize: 12, color: '#888', cursor: 'pointer',
+  },
+  noteActionBtn: {
+    padding: '2px 6px', background: 'transparent', border: '1px solid #e0e0e0',
+    borderRadius: 4, fontSize: 11, color: '#888', cursor: 'pointer',
   },
 
   // Final Link
