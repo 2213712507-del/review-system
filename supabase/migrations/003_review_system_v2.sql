@@ -66,17 +66,29 @@ CREATE POLICY "Users can view own permissions"
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS username TEXT UNIQUE;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS remark TEXT DEFAULT '';
 
--- 允许用户插入/更新自己的 profile
-CREATE POLICY IF NOT EXISTS "Users can insert own profile"
-  ON profiles FOR INSERT
-  TO authenticated
-  WITH CHECK (id = auth.uid()::UUID);
+-- 允许用户插入/更新自己的 profile（如果策略已存在则跳过）
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'profiles' AND policyname = 'Users can insert own profile'
+  ) THEN
+    CREATE POLICY "Users can insert own profile"
+      ON profiles FOR INSERT
+      TO authenticated
+      WITH CHECK (id = auth.uid()::UUID);
+  END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "Users can update own profile"
-  ON profiles FOR UPDATE
-  TO authenticated
-  USING (id = auth.uid()::UUID)
-  WITH CHECK (id = auth.uid()::UUID);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'profiles' AND policyname = 'Users can update own profile'
+  ) THEN
+    CREATE POLICY "Users can update own profile"
+      ON profiles FOR UPDATE
+      TO authenticated
+      USING (id = auth.uid()::UUID)
+      WITH CHECK (id = auth.uid()::UUID);
+  END IF;
+END $$;
 
 -- 4. script_items 扩展（Feature 5）
 ALTER TABLE script_items ADD COLUMN IF NOT EXISTS script_text TEXT DEFAULT '';
