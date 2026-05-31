@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
-  const { user, profile, isAdmin, username } = useAuth();
+  const { user, profile, isAdmin, username, projectRoles } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -20,7 +20,18 @@ export default function Dashboard() {
     try {
       let query = supabase.from('projects').select('*').order('created_at', { ascending: false });
       if (!isAdmin) {
-        query = query.eq('created_by', user.id);
+        // 非管理员：只看被分配的项目
+        const { data: memberships } = await supabase
+          .from('project_members')
+          .select('project_id')
+          .eq('user_id', user.id);
+        const memberProjectIds = (memberships || []).map((m) => m.project_id);
+        if (memberProjectIds.length === 0) {
+          setProjects([]);
+          setLoading(false);
+          return;
+        }
+        query = query.in('id', memberProjectIds);
       }
       const { data: projData } = await query;
       const projectsData = projData || [];
@@ -30,18 +41,28 @@ export default function Dashboard() {
       if (projectIds.length > 0) {
         const { data: statsData } = await supabase
           .from('script_items')
-          .select('project_id, status')
+          .select('project_id, status, uploader_id')
           .in('project_id', projectIds);
 
+        // 按角色过滤：主账号和项目管理员看全部，普通成员只看自己上传
+        const visibleItems = (statsData || []).filter((item) => {
+          if (isAdmin) return true;
+          if (projectRoles[item.project_id] === 'admin') return true;
+          return item.uploader_id === user.id;
+        });
+
         const stats = {};
-        for (const item of statsData || []) {
+        for (const item of visibleItems) {
           if (!stats[item.project_id]) stats[item.project_id] = { uploaded: 0, in_review: 0, approved: 0, rejected: 0 };
           if (item.video_key) stats[item.project_id].uploaded++;
           if (item.status === 'in_review') stats[item.project_id].in_review++;
           if (item.status === 'approved') stats[item.project_id].approved++;
           if (item.status === 'rejected') stats[item.project_id].rejected++;
         }
-        setProjects(projectsData.map((p) => ({ ...p, stats: stats[p.id] || { uploaded: 0, in_review: 0, approved: 0, rejected: 0 } })));
+        setProjects(projectsData.map((p) => ({
+          ...p,
+          stats: stats[p.id] || { uploaded: 0, in_review: 0, approved: 0, rejected: 0 },
+        })));
       } else {
         setProjects(projectsData);
       }

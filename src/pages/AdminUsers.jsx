@@ -20,6 +20,7 @@ export default function AdminUsers() {
   const [loading, setLoading] = useState(true);
   const [editingUser, setEditingUser] = useState(null);
   const [userPerms, setUserPerms] = useState({});
+  // { [userId]: { [projectId]: 'admin' | 'member' } }
   const [userMemberships, setUserMemberships] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -44,13 +45,15 @@ export default function AdminUsers() {
       setUsers(usersRes.data || []);
       setProjects(projRes.data || []);
 
+      // project_members: { [userId]: { [projectId]: role } }
       const membersMap = {};
       (membersRes.data || []).forEach((m) => {
-        if (!membersMap[m.user_id]) membersMap[m.user_id] = [];
-        membersMap[m.user_id].push(m.project_id);
+        if (!membersMap[m.user_id]) membersMap[m.user_id] = {};
+        membersMap[m.user_id][m.project_id] = m.role || 'member';
       });
       setUserMemberships(membersMap);
 
+      // user_permissions: { [userId]: { [projectId]: [perm1, perm2, ...] } }
       const permsMap = {};
       (permsRes.data || []).forEach((p) => {
         if (!permsMap[p.user_id]) permsMap[p.user_id] = {};
@@ -67,16 +70,17 @@ export default function AdminUsers() {
 
   async function handleApprove(user) {
     try {
-      const { error } = await supabase
+      await supabase
         .from('profiles')
         .update({ status: 'approved' })
         .eq('id', user.id);
-      if (error) throw error;
 
+      // 默认加入所有项目为普通成员
       for (const proj of projects) {
         await supabase.from('project_members').upsert({
           project_id: proj.id,
           user_id: user.id,
+          role: 'member',
         }, { onConflict: 'project_id,user_id' });
 
         await supabase.from('user_permissions').upsert({
@@ -105,14 +109,20 @@ export default function AdminUsers() {
   async function savePermissions(userId) {
     setSaving(true);
     try {
-      const members = userMemberships[userId] || [];
+      const members = userMemberships[userId] || {};
       const perms = userPerms[userId] || {};
 
+      // 重建 project_members
       await supabase.from('project_members').delete().eq('user_id', userId);
-      for (const pid of members) {
-        await supabase.from('project_members').insert({ project_id: pid, user_id: userId });
+      for (const [pid, role] of Object.entries(members)) {
+        await supabase.from('project_members').insert({
+          project_id: pid,
+          user_id: userId,
+          role: role,
+        });
       }
 
+      // 重建 user_permissions
       await supabase.from('user_permissions').delete().eq('user_id', userId);
       for (const [pid, permList] of Object.entries(perms)) {
         for (const perm of permList) {
@@ -136,12 +146,21 @@ export default function AdminUsers() {
 
   function toggleMembership(userId, projectId) {
     setUserMemberships((prev) => {
-      const list = prev[userId] || [];
-      const next = list.includes(projectId)
-        ? list.filter((id) => id !== projectId)
-        : [...list, projectId];
-      return { ...prev, [userId]: next };
+      const userM = { ...(prev[userId] || {}) };
+      if (userM[projectId]) {
+        delete userM[projectId];
+      } else {
+        userM[projectId] = 'member';
+      }
+      return { ...prev, [userId]: userM };
     });
+  }
+
+  function setRole(userId, projectId, role) {
+    setUserMemberships((prev) => ({
+      ...prev,
+      [userId]: { ...(prev[userId] || {}), [projectId]: role },
+    }));
   }
 
   function togglePermission(userId, projectId, permKey) {
@@ -160,7 +179,7 @@ export default function AdminUsers() {
   return (
     <div style={s.container}>
       <h1 style={s.title}>账号管理</h1>
-      <p style={s.subtitle}>审核注册申请、分配项目权限</p>
+      <p style={s.subtitle}>审核注册申请、分配项目权限 · 主账号看全部，项目管理员看该项目全部，普通成员只看自己上传</p>
 
       <div style={s.table}>
         <div style={s.theader}>
@@ -178,7 +197,9 @@ export default function AdminUsers() {
               <div style={s.td}>{u.email}</div>
               <div style={s.td}>{u.username || '-'}</div>
               <div style={s.td}>
-                <span style={s.roleBadge(u.role)}>{u.role === 'admin' ? '管理员' : '普通账号'}</span>
+                <span style={s.roleBadge(u.role)}>
+                  {u.role === 'admin' ? '主账号' : '普通账号'}
+                </span>
               </div>
               <div style={s.td}>
                 <span style={s.statusBadge(u.status)}>
@@ -195,9 +216,7 @@ export default function AdminUsers() {
                     </>
                   )}
                   {u.status === 'approved' && u.role !== 'admin' && (
-                    <button style={s.btnEdit} onClick={() => {
-                      setEditingUser(u);
-                    }}>权限配置</button>
+                    <button style={s.btnEdit} onClick={() => setEditingUser(u)}>权限配置</button>
                   )}
                 </div>
               </div>
@@ -220,19 +239,33 @@ export default function AdminUsers() {
                   />
                 </div>
 
-                <h4 style={s.sectionTitle}>项目分配（勾选可访问的项目）</h4>
+                <h4 style={s.sectionTitle}>项目分配与角色</h4>
                 {projects.map((proj) => {
-                  const isMember = (userMemberships[u.id] || []).includes(proj.id);
+                  const memberRole = (userMemberships[u.id] || {})[proj.id];
+                  const isMember = !!memberRole;
                   return (
                     <div key={proj.id} style={s.projRow}>
-                      <label style={s.checkLabel}>
-                        <input
-                          type="checkbox"
-                          checked={isMember}
-                          onChange={() => toggleMembership(u.id, proj.id)}
-                        />
-                        <span style={s.projName}>{proj.name}</span>
-                      </label>
+                      <div style={s.projHeader}>
+                        <label style={s.checkLabel}>
+                          <input
+                            type="checkbox"
+                            checked={isMember}
+                            onChange={() => toggleMembership(u.id, proj.id)}
+                          />
+                          <span style={s.projName}>{proj.name}</span>
+                        </label>
+
+                        {isMember && (
+                          <select
+                            style={s.roleSelect}
+                            value={memberRole}
+                            onChange={(e) => setRole(u.id, proj.id, e.target.value)}
+                          >
+                            <option value="member">普通成员（只看自己上传）</option>
+                            <option value="admin">项目管理员（看全部）</option>
+                          </select>
+                        )}
+                      </div>
 
                       {isMember && (
                         <div style={s.permGrid}>
@@ -296,10 +329,15 @@ const s = {
   remarkRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 },
   label: { fontSize: 13, color: '#555', fontWeight: 500 },
   input: { flex: 1, padding: '6px 10px', border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 13, outline: 'none' },
-  projRow: { marginBottom: 8 },
+  projRow: { marginBottom: 10, padding: '8px 12px', background: '#fff', borderRadius: 8, border: '1px solid #eee' },
+  projHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   checkLabel: { display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' },
   projName: { fontWeight: 500 },
-  permGrid: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4, marginLeft: 24, marginBottom: 4 },
+  roleSelect: {
+    padding: '2px 8px', border: '1px solid #e0e0e0', borderRadius: 4,
+    fontSize: 12, outline: 'none', background: '#fff',
+  },
+  permGrid: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, marginLeft: 24 },
   permLabel: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#555', cursor: 'pointer' },
   editActions: { display: 'flex', gap: 8, marginTop: 16 },
   btnSave: { padding: '6px 16px', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer' },

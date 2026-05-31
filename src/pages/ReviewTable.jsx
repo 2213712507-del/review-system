@@ -6,7 +6,7 @@ import { uploadToCOS, getPresignedUrl, deleteFromCOS, BUCKET, REGION } from '../
 
 export default function ReviewTable() {
   const { projectId, dateId } = useParams();
-  const { user, profile, isAdmin } = useAuth();
+  const { user, profile, isAdmin, canSeeAllInProject } = useAuth();
   const [project, setProject] = useState(null);
   const [shootDate, setShootDate] = useState(null);
   const [items, setItems] = useState([]);
@@ -35,7 +35,11 @@ export default function ReviewTable() {
       ]);
       setProject(projRes.data);
       setShootDate(dateRes.data);
-      const itemsData = itemsRes.data || [];
+      // 按角色过滤：主账号和项目管理员看全部，普通成员只看自己上传
+      let itemsData = itemsRes.data || [];
+      if (!canSeeAllInProject(projectId)) {
+        itemsData = itemsData.filter((item) => item.uploader_id === user.id);
+      }
       setItems(itemsData);
 
       // 查询所有条目的版本记录
@@ -72,43 +76,6 @@ export default function ReviewTable() {
     }
   }
 
-  async function fetchData() {
-    setLoading(true);
-    try {
-      const [projRes, dateRes, itemsRes] = await Promise.all([
-        supabase.from('projects').select('*').eq('id', projectId).single(),
-        supabase.from('shoot_dates').select('*').eq('id', dateId).single(),
-        supabase.from('script_items').select('*').eq('date_id', dateId).order('script_no'),
-      ]);
-      setProject(projRes.data);
-      setShootDate(dateRes.data);
-      const itemsData = itemsRes.data || [];
-      setItems(itemsData);
-
-      // 查询所有条目的版本记录
-      if (itemsData.length > 0) {
-        const itemIds = itemsData.map((i) => i.id);
-        const { data: verData } = await supabase
-          .from('video_versions')
-          .select('*')
-          .in('item_id', itemIds)
-          .order('version_no', { ascending: false });
-        const map = {};
-        (verData || []).forEach((v) => {
-          if (!map[v.item_id]) map[v.item_id] = [];
-          map[v.item_id].push(v);
-        });
-        setVersionsMap(map);
-      } else {
-        setVersionsMap({});
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function addItem() {
     if (!newItem.script_no.trim()) return;
     try {
@@ -119,6 +86,7 @@ export default function ReviewTable() {
           script_no: newItem.script_no.trim(),
           title: newItem.title.trim(),
           created_by: user.id,
+          uploader_id: user.id,
         })
         .select()
         .single();

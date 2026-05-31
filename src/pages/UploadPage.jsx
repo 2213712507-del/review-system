@@ -11,7 +11,7 @@ const statusLabels = {
 };
 
 export default function UploadPage() {
-  const { user } = useAuth();
+  const { user, canSeeAllInProject } = useAuth();
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
   const [items, setItems] = useState([]);
@@ -27,7 +27,18 @@ export default function UploadPage() {
   }, [selectedProject]);
 
   async function fetchProjects() {
-    const { data } = await supabase.from('projects').select('id,name').order('created_at', { ascending: false });
+    // 非管理员：只看被分配的项目
+    let query = supabase.from('projects').select('id,name').order('created_at', { ascending: false });
+    if (!canSeeAllInProject(null)) {
+      const { data: memberships } = await supabase
+        .from('project_members')
+        .select('project_id')
+        .eq('user_id', user.id);
+      const ids = (memberships || []).map((m) => m.project_id);
+      if (ids.length === 0) { setProjects([]); return; }
+      query = query.in('id', ids);
+    }
+    const { data } = await query;
     setProjects(data || []);
     if (data && data.length > 0 && !selectedProject) {
       setSelectedProject(data[0].id);
@@ -42,7 +53,12 @@ export default function UploadPage() {
         .select('*')
         .eq('project_id', projectId)
         .order('script_number', { ascending: true });
-      setItems(data || []);
+      // 普通成员只看自己上传
+      let itemsData = data || [];
+      if (!canSeeAllInProject(projectId)) {
+        itemsData = itemsData.filter((item) => item.uploader_id === user.id);
+      }
+      setItems(itemsData);
     } catch (err) {
       console.error(err);
     } finally {
@@ -73,7 +89,7 @@ export default function UploadPage() {
       // 更新数据库
       await supabase
         .from('script_items')
-        .update({ video_key: key, status: 'in_review' })
+        .update({ video_key: key, status: 'in_review', uploader_id: user.id })
         .eq('id', itemId);
 
       setItems(items.map((i) =>
