@@ -69,79 +69,77 @@ export default function AdminUsers() {
   }
 
   async function handleApprove(user) {
-    try {
-      await supabase
-        .from('profiles')
-        .update({ status: 'approved' })
-        .eq('id', user.id);
+    const { error: pErr } = await supabase
+      .from('profiles')
+      .update({ status: 'approved' })
+      .eq('id', user.id);
+    if (pErr) { alert('审核失败: ' + pErr.message); return; }
 
-      // 默认加入所有项目为普通成员
-      for (const proj of projects) {
-        await supabase.from('project_members').upsert({
-          project_id: proj.id,
-          user_id: user.id,
-          role: 'member',
-        }, { onConflict: 'project_id,user_id' });
+    // 默认加入所有项目为普通成员
+    for (const proj of projects) {
+      const { error: mErr } = await supabase.from('project_members').upsert({
+        project_id: proj.id,
+        user_id: user.id,
+        role: 'member',
+      }, { onConflict: 'project_id,user_id' });
+      if (mErr) { alert('分配项目失败: ' + mErr.message); return; }
 
-        await supabase.from('user_permissions').upsert({
-          user_id: user.id,
-          project_id: proj.id,
-          permission: 'view_project',
-        }, { onConflict: 'user_id,project_id,permission' });
-      }
-
-      await fetchData();
-    } catch (err) {
-      alert('操作失败: ' + err.message);
+      const { error: permErr } = await supabase.from('user_permissions').upsert({
+        user_id: user.id,
+        project_id: proj.id,
+        permission: 'view_project',
+      }, { onConflict: 'user_id,project_id,permission' });
+      if (permErr) { alert('分配权限失败: ' + permErr.message); return; }
     }
+
+    await fetchData();
+    alert('审核通过');
   }
 
   async function handleReject(userId) {
     if (!confirm('确定拒绝该账号？')) return;
-    try {
-      await supabase.from('profiles').update({ status: 'rejected' }).eq('id', userId);
-      await fetchData();
-    } catch (err) {
-      alert('操作失败: ' + err.message);
-    }
+    const { error } = await supabase.from('profiles').update({ status: 'rejected' }).eq('id', userId);
+    if (error) { alert('操作失败: ' + error.message); return; }
+    await fetchData();
   }
 
   async function savePermissions(userId) {
     setSaving(true);
-    try {
-      const members = userMemberships[userId] || {};
-      const perms = userPerms[userId] || {};
+    const members = userMemberships[userId] || {};
+    const perms = userPerms[userId] || {};
 
-      // 重建 project_members
-      await supabase.from('project_members').delete().eq('user_id', userId);
-      for (const [pid, role] of Object.entries(members)) {
-        await supabase.from('project_members').insert({
-          project_id: pid,
-          user_id: userId,
-          role: role,
-        });
-      }
+    // 重建 project_members
+    const { error: delM } = await supabase.from('project_members').delete().eq('user_id', userId);
+    if (delM) { alert('清除旧项目分配失败: ' + delM.message); setSaving(false); return; }
 
-      // 重建 user_permissions
-      await supabase.from('user_permissions').delete().eq('user_id', userId);
-      for (const [pid, permList] of Object.entries(perms)) {
-        for (const perm of permList) {
-          await supabase.from('user_permissions').insert({
-            user_id: userId,
-            project_id: pid || null,
-            permission: perm,
-          });
-        }
-      }
-
-      setEditingUser(null);
-      await fetchData();
-      alert('保存成功');
-    } catch (err) {
-      alert('保存失败: ' + err.message);
-    } finally {
-      setSaving(false);
+    for (const [pid, role] of Object.entries(members)) {
+      const { error: insM } = await supabase.from('project_members').insert({
+        project_id: pid,
+        user_id: userId,
+        role: role,
+      });
+      if (insM) { alert('保存项目分配失败: ' + insM.message); setSaving(false); return; }
     }
+
+    // 重建 user_permissions
+    const { error: delP } = await supabase.from('user_permissions').delete().eq('user_id', userId);
+    if (delP) { alert('清除旧权限失败: ' + delP.message); setSaving(false); return; }
+
+    for (const [pid, permList] of Object.entries(perms)) {
+      for (const perm of permList) {
+        const { error: insP } = await supabase.from('user_permissions').insert({
+          user_id: userId,
+          project_id: pid || null,
+          permission: perm,
+        });
+        if (insP) { alert('保存权限失败: ' + insP.message); setSaving(false); return; }
+      }
+    }
+
+    setEditingUser(null);
+    await fetchData();
+    alert('保存成功');
+    setSaving(false);
   }
 
   function toggleMembership(userId, projectId) {
@@ -232,7 +230,8 @@ export default function AdminUsers() {
                     defaultValue={u.remark || ''}
                     onBlur={async (e) => {
                       const v = e.target.value;
-                      await supabase.from('profiles').update({ remark: v }).eq('id', u.id);
+                      const { error } = await supabase.from('profiles').update({ remark: v }).eq('id', u.id);
+                      if (error) { alert('备注保存失败: ' + error.message); return; }
                       setUsers(users.map((x) => x.id === u.id ? { ...x, remark: v } : x));
                     }}
                     placeholder="备注信息"
