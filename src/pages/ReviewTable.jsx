@@ -7,6 +7,7 @@ import { uploadToCOS, getPresignedUrl, deleteFromCOS, BUCKET, REGION } from '../
 export default function ReviewTable() {
   const { projectId, dateId } = useParams();
   const { user, profile, isAdmin, canSeeAllInProject } = useAuth();
+  const [canManage, setCanManage] = useState(false); // 系统管理员 或 项目管理员
   const [project, setProject] = useState(null);
   const [shootDate, setShootDate] = useState(null);
   const [items, setItems] = useState([]);
@@ -35,6 +36,7 @@ export default function ReviewTable() {
       ]);
       setProject(projRes.data);
       setShootDate(dateRes.data);
+      setCanManage(canSeeAllInProject(projectId));
       // 按角色过滤：主账号和项目管理员看全部，普通成员只看自己上传
       let itemsData = itemsRes.data || [];
       if (!canSeeAllInProject(projectId)) {
@@ -329,7 +331,7 @@ export default function ReviewTable() {
             <div style={styles.colStatus}>状态</div>
             <div style={styles.colNotes}>修改意见</div>
             <div style={styles.colFinal}>成片链接</div>
-            {isAdmin && <div style={styles.colAction}>操作</div>}
+            {canManage && <div style={styles.colAction}>操作</div>}
           </div>
 
           {/* Table Rows */}
@@ -458,12 +460,12 @@ export default function ReviewTable() {
                     key={note.id || i}
                     note={note}
                     isOwn={note.created_by === user.id}
-                    isAdmin={isAdmin}
+                    isAdmin={canManage}
                     onDelete={() => deleteNote(item.id, note.id)}
                     onUpdate={(newText) => updateNote(item.id, note.id, newText)}
                   />
                 ))}
-                {isAdmin && (
+                {canManage && (
                   <div>
                     {editingNote === item.id ? (
                       <div style={styles.noteEdit}>
@@ -515,7 +517,7 @@ export default function ReviewTable() {
                   >
                     查看成片
                   </a>
-                ) : isAdmin ? (
+                ) : canManage ? (
                   <EditableLink
                     onSave={(link) => updateFinalLink(item.id, link)}
                   />
@@ -525,7 +527,7 @@ export default function ReviewTable() {
               </div>
 
               {/* Admin Actions */}
-              {isAdmin && (
+              {canManage && (
                 <div style={styles.colAction}>
                   {item.status === 'in_review' && (
                     <>
