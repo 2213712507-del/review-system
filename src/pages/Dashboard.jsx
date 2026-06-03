@@ -39,30 +39,37 @@ export default function Dashboard() {
       // 获取每个项目的脚本统计
       const projectIds = projectsData.map((p) => p.id);
       if (projectIds.length > 0) {
-        const { data: statsData } = await supabase
-          .from('script_items')
-          .select('project_id, status, uploader_id')
-          .in('project_id', projectIds);
+        try {
+          const { data: statsData, error: statsErr } = await supabase
+            .from('script_items')
+            .select('project_id, status, uploader_id')
+            .in('project_id', projectIds);
 
-        // 按角色过滤：主账号和项目管理员看全部，普通成员只看自己上传
-        const visibleItems = (statsData || []).filter((item) => {
-          if (isAdmin) return true;
-          if (projectRoles[item.project_id] === 'admin') return true;
-          return item.uploader_id === user.id;
-        });
+          if (!statsErr && statsData) {
+            const visibleItems = statsData.filter((item) => {
+              if (isAdmin) return true;
+              if (projectRoles[item.project_id] === 'admin') return true;
+              return item.uploader_id === user.id;
+            });
 
-        const stats = {};
-        for (const item of visibleItems) {
-          if (!stats[item.project_id]) stats[item.project_id] = { uploaded: 0, in_review: 0, approved: 0, rejected: 0 };
-          if (item.video_key) stats[item.project_id].uploaded++;
-          if (item.status === 'in_review') stats[item.project_id].in_review++;
-          if (item.status === 'approved') stats[item.project_id].approved++;
-          if (item.status === 'rejected') stats[item.project_id].rejected++;
+            const stats = {};
+            for (const item of visibleItems) {
+              if (!stats[item.project_id]) stats[item.project_id] = { uploaded: 0, in_review: 0, approved: 0, rejected: 0 };
+              if (item.video_key) stats[item.project_id].uploaded++;
+              if (item.status === 'in_review') stats[item.project_id].in_review++;
+              if (item.status === 'approved') stats[item.project_id].approved++;
+              if (item.status === 'rejected') stats[item.project_id].rejected++;
+            }
+            setProjects(projectsData.map((p) => ({
+              ...p,
+              stats: stats[p.id] || { uploaded: 0, in_review: 0, approved: 0, rejected: 0 },
+            })));
+          } else {
+            setProjects(projectsData);
+          }
+        } catch {
+          setProjects(projectsData);
         }
-        setProjects(projectsData.map((p) => ({
-          ...p,
-          stats: stats[p.id] || { uploaded: 0, in_review: 0, approved: 0, rejected: 0 },
-        })));
       } else {
         setProjects(projectsData);
       }
