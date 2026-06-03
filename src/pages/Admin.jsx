@@ -92,21 +92,27 @@ export default function Admin() {
   }
 
   async function updateUserStatus(userId, status) {
-    try {
-      await supabase.from('profiles').update({ status }).eq('id', userId);
-      setUsers(users.map((u) => (u.id === userId ? { ...u, status } : u)));
-    } catch (err) {
-      alert('更新失败: ' + err.message);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ status })
+      .eq('id', userId);
+    if (error) {
+      alert('更新失败: ' + error.message);
+      return;
     }
+    setUsers(users.map((u) => (u.id === userId ? { ...u, status } : u)));
   }
 
   async function updateUserRole(userId, role) {
-    try {
-      await supabase.from('profiles').update({ role }).eq('id', userId);
-      setUsers(users.map((u) => (u.id === userId ? { ...u, role } : u)));
-    } catch (err) {
-      alert('更新失败: ' + err.message);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ role })
+      .eq('id', userId);
+    if (error) {
+      alert('更新失败: ' + error.message);
+      return;
     }
+    setUsers(users.map((u) => (u.id === userId ? { ...u, role } : u)));
   }
 
   if (!isAdmin) return null;
