@@ -18,6 +18,7 @@ async function getCOSInstance() {
   // 从 Edge Function 获取密钥
   const { data, error } = await supabase.functions.invoke('cos-upload');
   if (error || data?.error) {
+    console.error('COS 密钥获取失败:', error || data?.error);
     throw new Error(error?.message || data?.error || '获取上传凭证失败');
   }
 
@@ -80,8 +81,13 @@ export async function getPresignedUrl(key) {
       Sign:    true,
       Expires: 86400,
     }, (err, data) => {
-      if (err) reject(err);
-      else resolve(data.Url);
+      if (err) {
+        console.error('预签名 URL 生成失败:', err);
+        reject(err);
+      } else {
+        console.log('预签名 URL 已生成:', key.substring(0, 30) + '...');
+        resolve(data.Url);
+      }
     });
   });
 }

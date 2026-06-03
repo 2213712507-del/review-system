@@ -77,11 +77,13 @@ function VideoThumb({ videoKey, onExpand }) {
       <video
         ref={probeRef}
         src={url}
+        crossOrigin="anonymous"
         style={{ display: 'none' }}
         onLoadedMetadata={handleProbeMeta}
       />
       <video
         src={url}
+        crossOrigin="anonymous"
         style={{
           width: thumbW, height: thumbH,
           objectFit: 'contain', borderRadius: 6,
@@ -274,6 +276,7 @@ export default function ReviewPage() {
             <button style={styles.closeBtn} onClick={() => setExpandedUrl(null)}>✕</button>
             <video
               src={expandedUrl}
+              crossOrigin="anonymous"
               controls
               autoPlay
               style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 8 }}

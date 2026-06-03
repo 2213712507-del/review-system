@@ -584,6 +584,7 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
   const [activeVersion, setActiveVersion] = useState(null);
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const [vidSize, setVidSize] = useState(null); // { w, h }
   const videoRef = useRef(null);
@@ -597,15 +598,19 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
     async function load() {
       setLoading(true);
       setVidSize(null);
+      setLoadErr(null);
+      setUrl(null);
       try {
         const key = selected?.video_key || item.video_key;
+        if (!key) { if (!cancelled) setLoading(false); return; }
         const presigned = await getPresignedUrl(key);
         if (!cancelled) {
           setUrl(presigned);
           setLoading(false);
         }
-      } catch {
-        if (!cancelled) setLoading(false);
+      } catch (err) {
+        console.error('视频签名获取失败:', err);
+        if (!cancelled) { setLoadErr(err.message || '获取失败'); setLoading(false); }
       }
     }
     load();
@@ -635,7 +640,8 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
   }
 
   if (loading) return <div style={styles.videoLoading}>加载预览...</div>;
-  if (!url) return <div style={styles.videoError}>加载失败</div>;
+  if (loadErr) return <div style={styles.videoError}>加载失败: {loadErr}</div>;
+  if (!url) return <div style={styles.videoError}>无视频</div>;
 
   // 按视频比例计算缩略图容器尺寸（最大 200x150）
   const MAX_W = 200, MAX_H = 150;
@@ -662,9 +668,11 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
         <video
           ref={probeRef}
           src={url}
+          crossOrigin="anonymous"
           style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
           preload="metadata"
           onLoadedMetadata={handleProbeMeta}
+          onError={(e) => console.error('探测视频加载失败:', e)}
         />
       )}
 
@@ -672,11 +680,13 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
         {/* 缩略图 */}
         <video
           src={url}
+          crossOrigin="anonymous"
           muted
           style={{ ...thumbStyle, cursor: 'pointer' }}
           preload="metadata"
           onClick={handleExpand}
           title="点击放大播放"
+          onError={(e) => { console.error('视频加载失败:', e); setLoadErr('视频无法播放'); }}
         />
 
         {/* 版本切换 + 上传新版本 */}
@@ -745,9 +755,11 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
             <video
               ref={videoRef}
               src={url}
+              crossOrigin="anonymous"
               controls
               autoPlay
               style={styles.expandedVideo}
+              onError={(e) => console.error('大屏视频加载失败:', e)}
             />
           </div>
         </div>
