@@ -36,29 +36,32 @@ export default function Dashboard() {
       const { data: projData } = await query;
       const projectsData = projData || [];
 
-      // 获取每个项目的脚本统计
+      // RPC 统计接口（绕过 PostgREST schema 缓存问题）
       const projectIds = projectsData.map((p) => p.id);
       if (projectIds.length > 0) {
         try {
-          const { data: statsData, error: statsErr } = await supabase
-            .from('script_items')
-            .select('project_id, status, uploader_id')
-            .in('project_id', projectIds);
+          // 拆分为管理项目和普通成员项目
+          const adminPids = isAdmin ? projectIds : projectIds.filter((pid) => projectRoles[pid] === 'admin');
+          const memberPids = isAdmin ? [] : projectIds.filter((pid) => projectRoles[pid] !== 'admin');
+
+          const { data: statsData, error: statsErr } = await supabase.rpc(
+            'get_project_stats',
+            {
+              p_admin_project_ids: adminPids,
+              p_member_project_ids: memberPids,
+              p_user_id: user.id,
+            }
+          );
 
           if (!statsErr && statsData) {
-            const visibleItems = statsData.filter((item) => {
-              if (isAdmin) return true;
-              if (projectRoles[item.project_id] === 'admin') return true;
-              return item.uploader_id === user.id;
-            });
-
             const stats = {};
-            for (const item of visibleItems) {
-              if (!stats[item.project_id]) stats[item.project_id] = { uploaded: 0, in_review: 0, approved: 0, rejected: 0 };
-              if (item.video_key) stats[item.project_id].uploaded++;
-              if (item.status === 'in_review') stats[item.project_id].in_review++;
-              if (item.status === 'approved') stats[item.project_id].approved++;
-              if (item.status === 'rejected') stats[item.project_id].rejected++;
+            for (const row of statsData) {
+              stats[row.project_id] = {
+                uploaded: Number(row.uploaded),
+                in_review: Number(row.in_review),
+                approved: Number(row.approved),
+                rejected: Number(row.rejected),
+              };
             }
             setProjects(projectsData.map((p) => ({
               ...p,
