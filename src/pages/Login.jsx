@@ -57,15 +57,18 @@ export default function Login() {
           if (data.user && data.user.identities?.length === 0) {
             setError('该邮箱已注册，请直接登录');
         } else {
-          // 注册成功后写入 profiles 表
+          // 注册成功后通过 RPC 写入 profiles（绕过 RLS）
           if (data.user) {
-            await supabase.from('profiles').insert({
-              id: data.user.id,
-              email: email,
-              username: username.trim(),
-              role: 'uploader',
-              status: 'pending',
+            const { error: rpcErr } = await supabase.rpc('create_user_profile', {
+              p_user_id: data.user.id,
+              p_email: email,
+              p_username: username.trim(),
             });
+            if (rpcErr) {
+              setError('注册成功但初始化失败，请联系管理员: ' + rpcErr.message);
+              setLoading(false);
+              return;
+            }
           }
           setMessage('注册成功！账号审核中，请等待管理员审核...');
           setTimeout(() => navigate('/'), 2000);
