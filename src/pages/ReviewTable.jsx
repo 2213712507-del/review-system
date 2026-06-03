@@ -4,6 +4,140 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { uploadToCOS, getPresignedUrl, deleteFromCOS, BUCKET, REGION } from '../lib/cos';
 
+// ── Note image helpers ───────────────────────────────────────────
+
+/** 将编辑器 HTML 中带 data-cos-key 的 img 替换为 <cos-img> 存储标记 */
+function editorHtmlToStorage(html) {
+  return html.replace(
+    /<img[^>]*\bdata-cos-key="([^"]*)"[^>]*\/?>/g,
+    (_, key) => `<cos-img key="${key}" />`
+  );
+}
+
+/** 异步解析存储 HTML 中的 <cos-img> → <img presigned> */
+async function resolveNoteImages(html) {
+  if (!html || !html.includes('<cos-img')) return html;
+  const keys = [];
+  const re = /<cos-img\s+key="([^"]+)"\s*\/>/g;
+  let m;
+  while ((m = re.exec(html)) !== null) keys.push(m[1]);
+  if (keys.length === 0) return html;
+
+  const map = {};
+  await Promise.all(keys.map(async (k) => {
+    try { map[k] = await getPresignedUrl(k); } catch { map[k] = ''; }
+  }));
+
+  let result = html;
+  for (const [k, url] of Object.entries(map)) {
+    result = result.split(`<cos-img key="${k}" />`).join(
+      `<img src="${url}" data-cos-key="${k}" class="note-inline-img" />`
+    );
+  }
+  return result;
+}
+
+// ── Image Lightbox ───────────────────────────────────────────────
+
+function ImageLightbox({ url, onClose }) {
+  return (
+    <div style={styles.lightboxOverlay} onClick={onClose}>
+      <div style={styles.lightboxContent} onClick={(e) => e.stopPropagation()}>
+        <button style={styles.lightboxClose} onClick={onClose}>✕</button>
+        <img src={url} style={styles.lightboxImg} alt="放大查看" />
+      </div>
+    </div>
+  );
+}
+
+// ── Rich Text Editor (contentEditable) ───────────────────────────
+
+function RichTextEditor({ value, onChange, placeholder, uploadImage, itemId, readOnly }) {
+  const editorRef = useRef(null);
+  const [focused, setFocused] = useState(false);
+
+  // 外部 value 变更时同步（仅在未聚焦时）
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el || focused) return;
+    if (el.innerHTML !== value) {
+      el.innerHTML = value || '';
+    }
+  }, [value, focused]);
+
+  function emitChange() {
+    if (editorRef.current) onChange(editorRef.current.innerHTML);
+  }
+
+  async function handlePaste(e) {
+    const items = e.clipboardData?.items;
+    if (!items || !uploadImage) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        // 在光标位置插入加载提示
+        const sel = window.getSelection();
+        let loadSpan = null;
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          loadSpan = document.createElement('span');
+          loadSpan.textContent = '[上传中…]';
+          loadSpan.style.cssText = 'color:#aaa;font-size:12px;';
+          range.deleteContents();
+          range.insertNode(loadSpan);
+          range.collapse(false);
+        }
+
+        try {
+          const { url, key } = await uploadImage(itemId, file);
+          // 替换加载提示为 img
+          const imgHtml = `<img src="${url}" data-cos-key="${key}" class="note-inline-img" />`;
+          if (loadSpan) {
+            loadSpan.outerHTML = imgHtml;
+          } else {
+            document.execCommand('insertHTML', false, imgHtml);
+          }
+          emitChange();
+        } catch (err) {
+          console.error('笔记图片上传失败:', err);
+          if (loadSpan) loadSpan.remove();
+          alert('图片上传失败');
+        }
+        return;
+      }
+    }
+  }
+
+  const showPlaceholder = !value && !focused;
+
+  return (
+    <div style={{ position: 'relative' }}>
+      {showPlaceholder && (
+        <div style={styles.richPlaceholder}>{placeholder}</div>
+      )}
+      <div
+        ref={editorRef}
+        contentEditable={!readOnly}
+        suppressContentEditableWarning
+        onInput={emitChange}
+        onPaste={handlePaste}
+        onFocus={() => setFocused(true)}
+        onBlur={() => { setFocused(false); emitChange(); }}
+        style={{
+          ...styles.richEditor,
+          opacity: readOnly ? 0.7 : 1,
+          cursor: readOnly ? 'default' : 'text',
+        }}
+      />
+    </div>
+  );
+}
+
 export default function ReviewTable() {
   const { projectId, dateId } = useParams();
   const { user, profile, isAdmin, canSeeAllInProject } = useAuth();
@@ -211,14 +345,24 @@ export default function ReviewTable() {
     }
   }
 
+  /** 上传笔记图片到 COS，返回 presigned url + key */
+  async function uploadNoteImage(itemId, file) {
+    const key = `notes-images/${projectId}/${dateId}/${itemId}/${Date.now()}_${file.name || 'image.png'}`;
+    await uploadToCOS(file, key);
+    const presigned = await getPresignedUrl(key);
+    return { url: presigned, key };
+  }
+
   async function saveNote(itemId) {
     if (!noteText.trim()) return;
     try {
       const item = items.find((i) => i.id === itemId);
       const notes = item.notes || [];
+      // 将编辑器 HTML 中的 img[data-cos-key] 转为 <cos-img> 存储标记
+      const storageHtml = editorHtmlToStorage(noteText.trim());
       const newNote = {
         id: Date.now().toString() + '_' + user.id,
-        text: noteText.trim(),
+        text: storageHtml,
         created_by: user.id,
         created_by_name: profile?.email || user.email,
         created_at: new Date().toISOString(),
@@ -247,12 +391,14 @@ export default function ReviewTable() {
     }
   }
 
-  async function updateNote(itemId, noteId, newText) {
-    if (!newText.trim()) return;
+  async function updateNote(itemId, noteId, newHtml) {
+    if (!newHtml.trim()) return;
     try {
       const item = items.find((i) => i.id === itemId);
+      // 将编辑器 HTML 中的 img[data-cos-key] 转为 <cos-img> 存储标记
+      const storageHtml = editorHtmlToStorage(newHtml.trim());
       const notes = (item.notes || []).map((n) =>
-        n.id === noteId ? { ...n, text: newText.trim(), edited_at: new Date().toISOString() } : n
+        n.id === noteId ? { ...n, text: storageHtml, edited_at: new Date().toISOString() } : n
       );
       await supabase.from('script_items').update({ notes }).eq('id', itemId);
       await fetchData();
@@ -279,6 +425,20 @@ export default function ReviewTable() {
 
   return (
     <div style={styles.container}>
+      <style>{`
+        .note-inline-img {
+          max-width: 280px;
+          max-height: 180px;
+          border-radius: 6px;
+          cursor: pointer;
+          margin: 4px 0;
+          display: block;
+          transition: opacity 0.15s;
+        }
+        .note-inline-img:hover {
+          opacity: 0.85;
+        }
+      `}</style>
       <div style={styles.header}>
         <button style={styles.backBtn} onClick={() => navigate(`/project/${projectId}`)}>
           ← 返回
@@ -461,20 +621,22 @@ export default function ReviewTable() {
                     note={note}
                     isOwn={note.created_by === user.id}
                     isAdmin={canManage}
+                    uploadImage={uploadNoteImage}
+                    itemId={item.id}
                     onDelete={() => deleteNote(item.id, note.id)}
-                    onUpdate={(newText) => updateNote(item.id, note.id, newText)}
+                    onUpdate={(newHtml) => updateNote(item.id, note.id, newHtml)}
                   />
                 ))}
                 {canManage && (
                   <div>
                     {editingNote === item.id ? (
                       <div style={styles.noteEdit}>
-                        <textarea
-                          style={styles.noteTextarea}
+                        <RichTextEditor
                           value={noteText}
-                          onChange={(e) => setNoteText(e.target.value)}
-                          placeholder="输入修改意见..."
-                          rows={2}
+                          onChange={setNoteText}
+                          placeholder="输入修改意见，可直接粘贴图片..."
+                          uploadImage={uploadNoteImage}
+                          itemId={item.id}
                         />
                         <div style={styles.noteActions}>
                           <button style={styles.btnMini} onClick={() => saveNote(item.id)}>
@@ -768,31 +930,90 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
   );
 }
 
-function NoteItem({ note, isOwn, isAdmin, onDelete, onUpdate }) {
+// ── Note Display (resolves cos-img → img) ───────────────────────
+
+function NoteHtml({ html }) {
+  const [resolved, setResolved] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    resolveNoteImages(html).then((r) => { if (!cancelled) setResolved(r); });
+    return () => { cancelled = true; };
+  }, [html]);
+
+  function handleClick(e) {
+    const img = e.target.closest('img.note-inline-img');
+    if (img) setLightbox(img.src);
+  }
+
+  if (!resolved) return <div style={{ fontSize: 13, color: '#aaa', padding: '4px 0' }}>加载中…</div>;
+
+  const hasImg = resolved.includes('<img');
+
+  return (
+    <>
+      {hasImg ? (
+        <div
+          onClick={handleClick}
+          dangerouslySetInnerHTML={{ __html: resolved }}
+          style={{ fontSize: 13, color: '#555', lineHeight: 1.6, wordBreak: 'break-word' }}
+        />
+      ) : (
+        <p style={styles.noteText}>{html}</p>
+      )}
+      {lightbox && <ImageLightbox url={lightbox} onClose={() => setLightbox(null)} />}
+    </>
+  );
+}
+
+// ── Note Item ────────────────────────────────────────────────────
+
+function NoteItem({ note, isOwn, isAdmin, uploadImage, itemId, onDelete, onUpdate }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(note.text);
   const canModify = isOwn || isAdmin;
 
-  function handleSave() {
-    if (text.trim() && text.trim() !== note.text) {
-      onUpdate(text);
+  // 编辑时预加载：将 <cos-img> 转为可显示格式
+  useEffect(() => {
+    let cancelled = false;
+    if (editing) {
+      resolveNoteImages(note.text).then((r) => {
+        if (!cancelled) setText(r);
+      });
     }
+    return () => { cancelled = true; };
+  }, [editing, note.text]);
+
+  function handleSave() {
+    const storageText = editorHtmlToStorage(text);
+    const trimmed = storageText.replace(/<br\s*\/?>/g, '').replace(/&nbsp;/g, '').replace(/<[^>]*>/g, '').replace(/\s/g, '');
+    if (!trimmed || storageText === note.text) {
+      setEditing(false);
+      return;
+    }
+    onUpdate(text);
     setEditing(false);
   }
 
   if (editing) {
     return (
       <div style={styles.noteItem}>
-        <textarea
-          style={styles.noteTextarea}
+        <RichTextEditor
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={2}
-          autoFocus
+          onChange={setText}
+          placeholder="编辑意见，可粘贴图片..."
+          uploadImage={uploadImage}
+          itemId={itemId}
         />
         <div style={styles.noteActions}>
           <button style={styles.btnMini} onClick={handleSave}>保存</button>
-          <button style={styles.btnMiniGhost} onClick={() => { setEditing(false); setText(note.text); }}>取消</button>
+          <button
+            style={styles.btnMiniGhost}
+            onClick={() => { setEditing(false); setText(note.text); }}
+          >
+            取消
+          </button>
         </div>
       </div>
     );
@@ -800,7 +1021,7 @@ function NoteItem({ note, isOwn, isAdmin, onDelete, onUpdate }) {
 
   return (
     <div style={styles.noteItem}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
         <div>
           <span style={styles.noteAuthor}>{note.created_by_name}</span>
           <span style={styles.noteTime}>
@@ -814,7 +1035,7 @@ function NoteItem({ note, isOwn, isAdmin, onDelete, onUpdate }) {
           <div style={{ display: 'flex', gap: 4 }}>
             <button
               style={styles.noteActionBtn}
-              onClick={() => { setEditing(true); setText(note.text); }}
+              onClick={() => setEditing(true)}
               title="编辑"
             >
               编辑
@@ -829,7 +1050,7 @@ function NoteItem({ note, isOwn, isAdmin, onDelete, onUpdate }) {
           </div>
         )}
       </div>
-      <p style={styles.noteText}>{note.text}</p>
+      <NoteHtml html={note.text} />
     </div>
   );
 }
@@ -1077,5 +1298,42 @@ const styles = {
   btnMiniGhost: {
     padding: '4px 10px', background: '#fff', color: '#666',
     border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+  },
+
+  // RichTextEditor
+  richEditor: {
+    width: '100%', minHeight: 60, padding: '8px',
+    border: '1px solid #e0e0e0', borderRadius: 6,
+    fontSize: 13, outline: 'none',
+    boxSizing: 'border-box', background: '#fff',
+    overflowY: 'auto', lineHeight: 1.6,
+  },
+  richPlaceholder: {
+    position: 'absolute', top: 8, left: 10, fontSize: 13, color: '#ccc',
+    pointerEvents: 'none', zIndex: 0,
+  },
+
+  // Lightbox
+  lightboxOverlay: {
+    position: 'fixed', inset: 0, zIndex: 10000,
+    background: 'rgba(0,0,0,0.88)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  lightboxContent: {
+    position: 'relative', maxWidth: '90vw', maxHeight: '90vh',
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    cursor: 'default',
+  },
+  lightboxImg: {
+    maxWidth: '90vw', maxHeight: '85vh', objectFit: 'contain',
+    borderRadius: 8,
+  },
+  lightboxClose: {
+    alignSelf: 'flex-end', marginBottom: 8,
+    width: 36, height: 36, background: 'rgba(255,255,255,0.2)',
+    color: '#fff', border: 'none', borderRadius: '50%',
+    fontSize: 18, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
 };
