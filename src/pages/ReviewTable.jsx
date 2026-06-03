@@ -145,10 +145,11 @@ export default function ReviewTable() {
   const [project, setProject] = useState(null);
   const [shootDate, setShootDate] = useState(null);
   const [items, setItems] = useState([]);
+  const [projectMembers, setProjectMembers] = useState([]); // [{user_id, role, name}]
   const [versionsMap, setVersionsMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [newItem, setNewItem] = useState({ script_no: '', title: '' });
+  const [newItem, setNewItem] = useState({ script_no: '', title: '', assignee_id: '' });
   const [uploading, setUploading] = useState({});
   const [editingNote, setEditingNote] = useState(null);
   const [noteText, setNoteText] = useState('');
@@ -163,18 +164,41 @@ export default function ReviewTable() {
   async function fetchData() {
     setLoading(true);
     try {
-      const [projRes, dateRes, itemsRes] = await Promise.all([
+      const [projRes, dateRes, itemsRes, membersRes] = await Promise.all([
         supabase.from('projects').select('*').eq('id', projectId).single(),
         supabase.from('shoot_dates').select('*').eq('id', dateId).single(),
         supabase.from('script_items').select('*').eq('date_id', dateId).order('script_no'),
+        supabase.from('project_members').select('user_id, role').eq('project_id', projectId),
       ]);
+
+      // 获取项目成员的用户名
+      const memberIds = (membersRes.data || []).map(m => m.user_id);
+      if (memberIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, username, email')
+          .in('id', memberIds);
+        const profileMap = {};
+        (profiles || []).forEach(p => { profileMap[p.id] = p; });
+        const members = (membersRes.data || []).map(m => ({
+          user_id: m.user_id,
+          role: m.role,
+          name: profileMap[m.user_id]?.username || profileMap[m.user_id]?.email || m.user_id,
+        }));
+        setProjectMembers(members);
+      } else {
+        setProjectMembers([]);
+      }
+
       setProject(projRes.data);
       setShootDate(dateRes.data);
       setCanManage(canSeeAllInProject(projectId));
-      // 按角色过滤：主账号和项目管理员看全部，普通成员只看自己上传
+      // 按角色过滤：主账号和项目管理员看全部，普通成员只看分配给自己或自己上传的
       let itemsData = itemsRes.data || [];
       if (!canSeeAllInProject(projectId)) {
-        itemsData = itemsData.filter((item) => item.uploader_id === user.id);
+        itemsData = itemsData.filter((item) =>
+          item.assignee_id === user.id || item.uploader_id === user.id
+        );
       }
       setItems(itemsData);
 
@@ -214,6 +238,7 @@ export default function ReviewTable() {
 
   async function addItem() {
     if (!newItem.script_no.trim()) return;
+    if (!newItem.assignee_id) { alert('请选择分配人'); return; }
     try {
       const { data, error } = await supabase
         .from('script_items')
@@ -223,12 +248,13 @@ export default function ReviewTable() {
           title: newItem.title.trim(),
           created_by: user.id,
           uploader_id: user.id,
+          assignee_id: newItem.assignee_id,
         })
         .select()
         .single();
       if (error) throw error;
       setItems([...items, data]);
-      setNewItem({ script_no: '', title: '' });
+      setNewItem({ script_no: '', title: '', assignee_id: '' });
       setShowAdd(false);
     } catch (err) {
       alert('添加失败: ' + err.message);
@@ -421,6 +447,13 @@ export default function ReviewTable() {
     rejected: '#fee2e2',
   };
 
+  // 根据 assignee_id 解析显示名称
+  function getAssigneeName(assigneeId) {
+    if (!assigneeId) return '-';
+    const member = projectMembers.find((m) => m.user_id === assigneeId);
+    return member?.name || assigneeId;
+  }
+
   if (loading) return <div style={styles.loading}>加载中...</div>;
 
   return (
@@ -471,6 +504,16 @@ export default function ReviewTable() {
             onChange={(e) => setNewItem({ ...newItem, title: e.target.value })}
             onKeyDown={(e) => e.key === 'Enter' && addItem()}
           />
+          <select
+            style={styles.selectSmall}
+            value={newItem.assignee_id}
+            onChange={(e) => setNewItem({ ...newItem, assignee_id: e.target.value })}
+          >
+            <option value="">选择分配人</option>
+            {projectMembers.map((m) => (
+              <option key={m.user_id} value={m.user_id}>{m.name}</option>
+            ))}
+          </select>
           <button style={styles.btnSmall} onClick={addItem}>确定</button>
           <button style={styles.btnSmallGhost} onClick={() => setShowAdd(false)}>取消</button>
         </div>
@@ -486,6 +529,7 @@ export default function ReviewTable() {
             <div style={styles.colTitle}>标题</div>
             <div style={styles.colScript}>脚本内容</div>
             <div style={styles.colVideo}>预审片</div>
+            <div style={styles.colAssignee}>分配人</div>
             <div style={styles.colUploader}>上传者</div>
             <div style={styles.colTime}>上传时间</div>
             <div style={styles.colStatus}>状态</div>
@@ -587,6 +631,8 @@ export default function ReviewTable() {
                   </div>
                 )}
               </div>
+
+              <div style={styles.colAssignee}>{getAssigneeName(item.assignee_id)}</div>
 
               <div style={styles.colUploader}>{item.uploader_name || '-'}</div>
               <div style={styles.colTime}>
@@ -1114,6 +1160,7 @@ const styles = {
   },
   input: { flex: 1, padding: '8px 14px', border: '1px solid #e0e0e0', borderRadius: 8, fontSize: 14, outline: 'none' },
   inputSmall: { width: 120, padding: '8px 14px', border: '1px solid #e0e0e0', borderRadius: 8, fontSize: 14, outline: 'none' },
+  selectSmall: { width: 140, padding: '8px 10px', border: '1px solid #e0e0e0', borderRadius: 8, fontSize: 14, outline: 'none', background: '#fff', cursor: 'pointer' },
   btnSmall: { padding: '8px 16px', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer' },
   btnSmallGhost: { padding: '8px 16px', background: '#fff', color: '#666', border: '1px solid #e0e0e0', borderRadius: 8, fontSize: 13, cursor: 'pointer' },
   empty: { textAlign: 'center', color: '#aaa', marginTop: 60, fontSize: 14 },
@@ -1133,6 +1180,7 @@ const styles = {
   colScript: { width: 100, flexShrink: 0 },
   colVideo: { width: 200, flexShrink: 0 },
   colUploader: { width: 90, flexShrink: 0, color: '#666', fontSize: 12, wordBreak: 'break-all' },
+  colAssignee: { width: 80, flexShrink: 0, color: '#1a1a1a', fontSize: 12, fontWeight: 500 },
   colTime: { width: 120, flexShrink: 0, color: '#888', fontSize: 12 },
   colStatus: { width: 80, flexShrink: 0 },
   colNotes: { flex: 1, minWidth: 200 },
