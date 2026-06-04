@@ -6,9 +6,66 @@ import { uploadToCOS, getPresignedUrl, deleteFromCOS, BUCKET, REGION } from '../
 
 // ── Note image helpers ───────────────────────────────────────────
 
+/**
+ * 清理浏览器粘贴文字时产生的多余 HTML：
+ * - 去除 <span style="..."> 包装，保留其文字内容
+ * - 去除 <font>、<b style>、多余属性等
+ * - 保留 <cos-img>、<img data-cos-key> 不变
+ * - 保留 <br>、<p>、<div> 基本换行结构
+ */
+function sanitizeNoteHtml(html) {
+  if (!html) return '';
+  // 用 DOMParser 解析（浏览器环境）
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+    const root = doc.body.firstChild;
+
+    function cleanNode(node) {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+      const tag = node.tagName.toLowerCase();
+
+      // cos-img 保持原样
+      if (tag === 'cos-img') {
+        const key = node.getAttribute('key') || '';
+        return `<cos-img key="${key}" />`;
+      }
+      // img with data-cos-key 保持原样
+      if (tag === 'img' && node.hasAttribute('data-cos-key')) {
+        const key = node.getAttribute('data-cos-key') || '';
+        const src = node.getAttribute('src') || '';
+        const cls = node.getAttribute('class') || '';
+        return `<img src="${src}" data-cos-key="${key}" class="${cls}" />`;
+      }
+      // 忽略 script/style 标签
+      if (tag === 'script' || tag === 'style') return '';
+
+      const childContent = Array.from(node.childNodes).map(cleanNode).join('');
+
+      // 换行标签保留
+      if (tag === 'br') return '<br>';
+      if (tag === 'p' || tag === 'div') return childContent + '<br>';
+      // 其他标签（span、b、font 等）直接剥离，只留内容
+      return childContent;
+    }
+
+    let result = Array.from(root.childNodes).map(cleanNode).join('');
+    // 去掉末尾多余的 <br>
+    result = result.replace(/(<br\s*\/?>)+$/, '').trim();
+    return result;
+  } catch {
+    // DOMParser 不可用时降级：直接去掉 span style
+    return html.replace(/<span[^>]*style="[^"]*"[^>]*>([\s\S]*?)<\/span>/gi, '$1');
+  }
+}
+
 /** 将编辑器 HTML 中带 data-cos-key 的 img 替换为 <cos-img> 存储标记 */
 function editorHtmlToStorage(html) {
-  return html.replace(
+  // 先清理再转换
+  const cleaned = sanitizeNoteHtml(html);
+  return cleaned.replace(
     /<img[^>]*\bdata-cos-key="([^"]*)"[^>]*\/?>/g,
     (_, key) => `<cos-img key="${key}" />`
   );
@@ -995,19 +1052,13 @@ function NoteHtml({ html }) {
 
   if (!resolved) return <div style={{ fontSize: 13, color: '#aaa', padding: '4px 0' }}>加载中…</div>;
 
-  const hasImg = resolved.includes('<img');
-
   return (
     <>
-      {hasImg ? (
-        <div
-          onClick={handleClick}
-          dangerouslySetInnerHTML={{ __html: resolved }}
-          style={{ fontSize: 13, color: '#555', lineHeight: 1.6, wordBreak: 'break-word' }}
-        />
-      ) : (
-        <p style={styles.noteText}>{html}</p>
-      )}
+      <div
+        onClick={handleClick}
+        dangerouslySetInnerHTML={{ __html: resolved }}
+        style={{ fontSize: 13, color: '#555', lineHeight: 1.6, wordBreak: 'break-word' }}
+      />
       {lightbox && <ImageLightbox url={lightbox} onClose={() => setLightbox(null)} />}
     </>
   );

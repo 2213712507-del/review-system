@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 export default function Admin() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState(null);
@@ -193,7 +193,7 @@ export default function Admin() {
                     设为管理员
                   </button>
                 )}
-                {u.role === 'admin' && u.id !== users[0]?.id && (
+                {u.role === 'admin' && u.id !== user?.id && (
                   <button
                     style={styles.demoteBtn}
                     onClick={() => updateUserRole(u.id, 'uploader')}
