@@ -25,7 +25,7 @@ const statusTextColors = {
 };
 
 // 获取视频预签名 URL（自动替换为 CDN 域名）
-const CDN_DOMAIN = 'review-system.online';
+const CDN_DOMAIN = null; // 未配置 CDN 时必须保持 null
 async function getVideoUrl(key) {
   if (!key) return null;
   const { data } = await supabase.functions.invoke('get-cos-presigned-url', {

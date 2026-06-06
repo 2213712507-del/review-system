@@ -6,13 +6,13 @@ export const REGION = 'ap-beijing';
 
 // CDN 自定义域名：启用 CDN 加速后改为 'review-system.online'，未配置 CDN 时改为 null
 // 改为 null 则继续使用 COS 标准域名（无 CDN 加速，费用较高）
-const CDN_DOMAIN = 'review-system.online';
+const CDN_DOMAIN = null;  // ⚠️ 未配置 CDN 时必须保持 null，否则视频无法加载
 
 export const BASE_URL = CDN_DOMAIN
   ? `https://${CDN_DOMAIN}`
   : `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-// ── COS 实例缓存 ─────────────────────────────────────────────────
+// ── COS 实例缓存 ────────────────────────────────────────────────
 let cosInstance = null;
 let keyExpiredAt = 0;
 
@@ -31,7 +31,7 @@ async function getCOSInstance() {
 
   // 新版 COS SDK 必须通过 getAuthorization 回调
   // 且需要 SecurityToken、ExpiredTime（10位时间戳）
-  const expiredTime = now + (data.expire || 7200);
+  const expiredTime = now + (data?.expire || 7200);
   cosInstance = new COS({
     getAuthorization: (options, callback) => {
       callback({
@@ -42,9 +42,43 @@ async function getCOSInstance() {
       });
     },
   });
-  keyExpiredAt = now + (data.expire || 7200);
+  keyExpiredAt = now + (data?.expire || 7200);
 
   return cosInstance;
+}
+
+// ── 预签名 URL 缓存（localStorage + 内存，24h 内不重复请求）───
+const _presignCache = new Map();           // 内存缓存（本次 session）
+const PRESIGN_LS_PREFIX = 'cos_presign_';
+const PRESIGN_MAX_AGE = 23 * 3600 * 1000; // 23h，留 1h 余量
+
+function _getPresignCache(key) {
+  // 先查内存
+  if (_presignCache.has(key)) {
+    const entry = _presignCache.get(key);
+    if (Date.now() < entry.expiresAt) return entry.url;
+    _presignCache.delete(key);
+  }
+  // 再查 localStorage
+  try {
+    const raw = localStorage.getItem(PRESIGN_LS_PREFIX + key);
+    if (raw) {
+      const entry = JSON.parse(raw);
+      if (Date.now() < entry.expiresAt) {
+        _presignCache.set(key, entry);
+        return entry.url;
+      }
+      localStorage.removeItem(PRESIGN_LS_PREFIX + key);
+    }
+  } catch {}
+  return null;
+}
+
+function _setPresignCache(key, url) {
+  const expiresAt = Date.now() + PRESIGN_MAX_AGE;
+  const entry = { url, expiresAt };
+  _presignCache.set(key, entry);
+  try { localStorage.setItem(PRESIGN_LS_PREFIX + key, JSON.stringify(entry)); } catch {}
 }
 
 // ── 上传 ────────────────────────────────────────────────────────
@@ -79,6 +113,13 @@ export async function uploadToCOS(file, key, onProgress) {
 
 // ── 获取观看 URL（带签名，24小时有效）────────────────────────
 export async function getPresignedUrl(key) {
+  // 命中缓存直接返回
+  const cached = _getPresignCache(key);
+  if (cached) {
+    console.log('[cache] 预签名 URL 缓存命中:', key.substring(0, 30) + '...');
+    return cached;
+  }
+
   const cos = await getCOSInstance();
 
   return new Promise((resolve, reject) => {
@@ -101,6 +142,7 @@ export async function getPresignedUrl(key) {
             CDN_DOMAIN
           );
         }
+        _setPresignCache(key, url);
         console.log('预签名 URL 已生成:', key.substring(0, 30) + '...', 'CDN:', !!CDN_DOMAIN);
         resolve(url);
       }
