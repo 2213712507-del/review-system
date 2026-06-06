@@ -11,9 +11,11 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [editingUsername, setEditingUsername] = useState(null);
   const [usernameDraft, setUsernameDraft] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [monthlyStats, setMonthlyStats] = useState([]);
+  const [projectId, setProjectId] = useState('');
+  const [dateId, setDateId] = useState('');
+  const [projects, setProjects] = useState([]);
+  const [shootDates, setShootDates] = useState([]);
+  const [detailStats, setDetailStats] = useState([]);
   // 拍摄时长录入
   const [showShootModal, setShowShootModal] = useState(false);
   const [shootForm, setShootForm] = useState({ userId: '', shootDate: '', hours: '', minutes: '', notes: '' });
@@ -38,6 +40,32 @@ export default function Admin() {
       setShootForm({ userId: '', shootDate: '', hours: '', minutes: '', notes: '' });
     }
   }, [showShootModal]);
+
+  // 进入数据统计页时加载项目列表
+  useEffect(() => {
+    if (tab === 'stats') {
+      supabase
+        .from('projects')
+        .select('id, name')
+        .order('created_at', { ascending: false })
+        .then(({ data }) => setProjects(data || []));
+    }
+  }, [tab]);
+
+  // 选择项目后加载拍摄日期
+  useEffect(() => {
+    if (projectId) {
+      supabase
+        .from('shoot_dates')
+        .select('id, shoot_date')
+        .eq('project_id', projectId)
+        .order('shoot_date', { ascending: false })
+        .then(({ data }) => setShootDates(data || []));
+    } else {
+      setShootDates([]);
+    }
+    setDateId('');
+  }, [projectId]);
 
   async function fetchData() {
     setLoading(true);
@@ -65,21 +93,18 @@ export default function Admin() {
       .select('*')
       .not('uploader_id', 'is', null);
 
-    if (startDate) {
-      query = query.gte('updated_at', startDate);
+    if (projectId) {
+      query = query.eq('project_id', projectId);
     }
-    if (endDate) {
-      // 包含结束当天
-      const nextDay = new Date(endDate);
-      nextDay.setDate(nextDay.getDate() + 1);
-      query = query.lt('updated_at', nextDay.toISOString().split('T')[0]);
+    if (dateId) {
+      query = query.eq('date_id', dateId);
     }
 
     const { data: items } = await query;
 
     if (!items || items.length === 0) {
       setStats({ uploaders: [], totalVideos: 0 });
-      setMonthlyStats([]);
+      setDetailStats([]);
       return;
     }
 
@@ -92,45 +117,29 @@ export default function Admin() {
     const profileMap = {};
     (profiles || []).forEach((p) => { profileMap[p.id] = p; });
 
-    // 按 上传者+月份 分组
-    const monthlyMap = {};
+    // 获取项目、拍摄日期名称
+    const projectIds = [...new Set(items.map((i) => i.project_id).filter(Boolean))];
+    const dateIds = [...new Set(items.map((i) => i.date_id).filter(Boolean))];
+    const [projRes, dateRes] = await Promise.all([
+      projectIds.length
+        ? supabase.from('projects').select('id, name').in('id', projectIds)
+        : Promise.resolve({ data: [] }),
+      dateIds.length
+        ? supabase.from('shoot_dates').select('id, shoot_date').in('id', dateIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+    const projectMap = {};
+    (projRes.data || []).forEach((p) => { projectMap[p.id] = p.name; });
+    const dateMap = {};
+    (dateRes.data || []).forEach((d) => { dateMap[d.id] = d.shoot_date; });
+
+    // 汇总上传者统计
     const uploaderTotalMap = {};
 
     items.forEach((item) => {
       const uid = item.uploader_id;
       const prof = profileMap[uid] || {};
-      const month = (item.updated_at || '').slice(0, 7); // YYYY-MM
-      if (!month) return;
 
-      // 月度分组 key
-      const mKey = `${uid}_${month}`;
-      if (!monthlyMap[mKey]) {
-        monthlyMap[mKey] = {
-          month,
-          uploader_id: uid,
-          uploader_name: item.uploader_name || '',
-          username: prof.username || '',
-          email: prof.email || '',
-          uploads: 0,
-          approved: 0,
-          total_review_hours: 0,
-          reviewed_count: 0,
-        };
-      }
-      monthlyMap[mKey].uploads++;
-
-      if (item.status === 'approved' && item.reviewed_at) {
-        monthlyMap[mKey].approved++;
-        const uploadTime = new Date(item.updated_at);
-        const reviewTime = new Date(item.reviewed_at);
-        const hours = (reviewTime - uploadTime) / (1000 * 60 * 60);
-        if (hours > 0) {
-          monthlyMap[mKey].total_review_hours += hours;
-          monthlyMap[mKey].reviewed_count++;
-        }
-      }
-
-      // 汇总到上传者总计
       if (!uploaderTotalMap[uid]) {
         uploaderTotalMap[uid] = {
           uploader_id: uid,
@@ -164,39 +173,75 @@ export default function Admin() {
           : null,
     }));
 
-    // 月度统计：按月份分组，每月下列出上传者
-    const monthOrder = [...new Set(Object.values(monthlyMap).map((m) => m.month))].sort();
-    const monthly = monthOrder.map((month) => {
-      const monthItems = Object.values(monthlyMap).filter((m) => m.month === month);
-      const uploaderRows = monthItems.map((m) => ({
-        ...m,
-        avg_review_hours:
-          m.reviewed_count > 0
-            ? (m.total_review_hours / m.reviewed_count).toFixed(1)
-            : null,
-      }));
-      return { month, uploaderRows };
+    // 按项目-拍摄日期-上传者 分组明细
+    const detailMap = {};
+    items.forEach((item) => {
+      const pid = item.project_id || 'unknown';
+      const did = item.date_id || 'unknown';
+      const uid = item.uploader_id;
+      const key = `${pid}_${did}`;
+      const prof = profileMap[uid] || {};
+
+      if (!detailMap[key]) {
+        detailMap[key] = {
+          projectId: pid,
+          projectName: projectMap[pid] || '未关联项目',
+          dateId: did,
+          dateName: dateMap[did] || '',
+          uploaders: {},
+        };
+      }
+
+      if (!detailMap[key].uploaders[uid]) {
+        detailMap[key].uploaders[uid] = {
+          uploader_id: uid,
+          uploader_name: item.uploader_name || '',
+          username: prof.username || '',
+          email: prof.email || '',
+          uploads: 0,
+          approved: 0,
+          total_review_hours: 0,
+          reviewed_count: 0,
+        };
+      }
+      detailMap[key].uploaders[uid].uploads++;
+      if (item.status === 'approved' && item.reviewed_at) {
+        detailMap[key].uploaders[uid].approved++;
+        const uploadTime = new Date(item.updated_at);
+        const reviewTime = new Date(item.reviewed_at);
+        const hours = (reviewTime - uploadTime) / (1000 * 60 * 60);
+        if (hours > 0) {
+          detailMap[key].uploaders[uid].total_review_hours += hours;
+          detailMap[key].uploaders[uid].reviewed_count++;
+        }
+      }
     });
 
-    // 查询拍摄时长（shooting_records）
-    let shootQuery = supabase
+    const detail = Object.values(detailMap).map((d) => ({
+      ...d,
+      uploaderRows: Object.values(d.uploaders).map((u) => ({
+        ...u,
+        avg_review_hours:
+          u.reviewed_count > 0
+            ? (u.total_review_hours / u.reviewed_count).toFixed(1)
+            : null,
+      })),
+    }));
+
+    // 按项目名、日期名排序
+    detail.sort((a, b) => {
+      if (a.projectName !== b.projectName) return a.projectName.localeCompare(b.projectName);
+      return (b.dateName || '').localeCompare(a.dateName || '');
+    });
+
+    // 查询拍摄时长（shooting_records）——不过滤项目/日期，只按用户汇总
+    const { data: shootData } = await supabase
       .from('shooting_records')
-      .select('user_id, shoot_date, duration');
+      .select('user_id, duration');
 
-    if (startDate) shootQuery = shootQuery.gte('shoot_date', startDate);
-    if (endDate) shootQuery = shootQuery.lte('shoot_date', endDate);
-
-    const { data: shootData } = await shootQuery;
-
-    // 汇总拍摄时长
-    const shootMap = {};       // userId -> total minutes
-    const shootMonthMap = {};  // `${userId}_${month}` -> minutes
+    const shootMap = {};
     (shootData || []).forEach((r) => {
-      const uid = r.user_id;
-      const month = (r.shoot_date || '').slice(0, 7);
-      shootMap[uid] = (shootMap[uid] || 0) + r.duration;
-      const mk = `${uid}_${month}`;
-      shootMonthMap[mk] = (shootMonthMap[mk] || 0) + r.duration;
+      shootMap[r.user_id] = (shootMap[r.user_id] || 0) + r.duration;
     });
 
     // 挂到 uploaders
@@ -205,17 +250,16 @@ export default function Admin() {
       u.shoot_hours = mins > 0 ? (mins / 60).toFixed(1) : null;
     });
 
-    // 挂到 monthlyStats
-    monthly.forEach((m) => {
-      m.uploaderRows.forEach((u) => {
-        const mk = `${u.uploader_id}_${m.month}`;
-        const mins = shootMonthMap[mk] || 0;
+    // 挂到 detailStats
+    detail.forEach((d) => {
+      d.uploaderRows.forEach((u) => {
+        const mins = shootMap[u.uploader_id] || 0;
         u.shoot_hours = mins > 0 ? (mins / 60).toFixed(1) : null;
       });
     });
 
     setStats({ uploaders, totalVideos: items.length });
-    setMonthlyStats(monthly);
+    setDetailStats(detail);
   }
 
   async function saveShootRecord() {
@@ -455,27 +499,36 @@ export default function Admin() {
         </div>
       ) : (
         <div style={styles.statsContainer}>
-          {/* 时间筛选 */}
+          {/* 项目 + 拍摄日期筛选 */}
           <div style={styles.filterBar}>
-            <span style={styles.filterLabel}>开始日期</span>
-            <input
-              type="date"
-              style={styles.dateInput}
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-            <span style={styles.filterLabel}>结束日期</span>
-            <input
-              type="date"
-              style={styles.dateInput}
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
+            <span style={styles.filterLabel}>项目</span>
+            <select
+              style={styles.formSelect}
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+            >
+              <option value="">全部项目</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <span style={styles.filterLabel}>拍摄日期</span>
+            <select
+              style={{ ...styles.formSelect, minWidth: 140 }}
+              value={dateId}
+              onChange={(e) => setDateId(e.target.value)}
+              disabled={!projectId}
+            >
+              <option value="">全部日期</option>
+              {shootDates.map((d) => (
+                <option key={d.id} value={d.id}>{d.shoot_date}</option>
+              ))}
+            </select>
             <button style={styles.filterBtn} onClick={() => { setLoading(true); fetchStats(); }}>
               查询
             </button>
-            {(startDate || endDate) && (
-              <button style={styles.filterClearBtn} onClick={() => { setStartDate(''); setEndDate(''); setLoading(true); fetchStats(); }}>
+            {(projectId || dateId) && (
+              <button style={styles.filterClearBtn} onClick={() => { setProjectId(''); setDateId(''); setLoading(true); fetchStats(); }}>
                 清除筛选
               </button>
             )}
@@ -530,13 +583,16 @@ export default function Admin() {
             </div>
           )}
 
-          {/* 按月统计 */}
-          {monthlyStats.length > 0 && (
+          {/* 按项目-拍摄日期-上传者 明细统计 */}
+          {detailStats.length > 0 && (
             <>
-              <h3 style={styles.sectionTitle}>按月统计</h3>
-              {monthlyStats.map((m) => (
-                <div key={m.month} style={styles.monthSection}>
-                  <div style={styles.monthHeader}>{m.month} 月</div>
+              <h3 style={styles.sectionTitle}>明细统计</h3>
+              {detailStats.map((d) => (
+                <div key={`${d.projectId}_${d.dateId}`} style={styles.monthSection}>
+                  <div style={styles.monthHeader}>
+                    {d.projectName}
+                    {d.dateName && <span style={{ color: '#888', fontWeight: 400, marginLeft: 8 }}>{d.dateName}</span>}
+                  </div>
                   <div style={styles.userList}>
                     <div style={styles.tableHeader}>
                       <div style={styles.colEmail}>上传者</div>
@@ -545,7 +601,7 @@ export default function Admin() {
                       <div style={styles.colShoot}>拍摄时长(h)</div>
                       <div style={styles.colTime}>平均审核时效</div>
                     </div>
-                    {m.uploaderRows.map((u, i) => (
+                    {d.uploaderRows.map((u, i) => (
                       <div key={i} style={styles.userRow}>
                         <div style={styles.colEmail}>
                           <div>{u.uploader_name}</div>
@@ -727,17 +783,13 @@ const styles = {
   statLabel: { fontSize: 13, color: '#888', marginTop: 4 },
   sectionTitle: { fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: '0 0 16px 0' },
 
-  // 时间筛选
+  // 筛选
   filterBar: {
     display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24,
     padding: '12px 16px', background: '#fff', borderRadius: 12,
     border: '1px solid #eee', flexWrap: 'wrap',
   },
   filterLabel: { fontSize: 13, color: '#888', whiteSpace: 'nowrap' },
-  dateInput: {
-    padding: '6px 10px', border: '1px solid #d1d5db',
-    borderRadius: 6, fontSize: 13, outline: 'none', color: '#1a1a1a',
-  },
   filterBtn: {
     padding: '6px 16px', background: '#1a1a1a', color: '#fff',
     border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer',
@@ -747,7 +799,7 @@ const styles = {
     border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, cursor: 'pointer',
   },
 
-  // 月度统计
+  // 明细统计
   monthSection: { marginBottom: 24 },
   monthHeader: {
     fontSize: 14, fontWeight: 600, color: '#1a1a1a',
@@ -787,8 +839,8 @@ const styles = {
     boxSizing: 'border-box',
   },
   formSelect: {
-    width: '100%', padding: '8px 12px', border: '1px solid #d1d5db',
-    borderRadius: 8, fontSize: 14, outline: 'none', color: '#1a1a1a',
+    padding: '6px 10px', border: '1px solid #d1d5db',
+    borderRadius: 6, fontSize: 13, outline: 'none', color: '#1a1a1a',
     background: '#fff',
   },
   modalActions: {
