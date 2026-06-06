@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { getPresignedUrl } from '../lib/cos';
 
 // 审核状态标签
 const statusLabels = {
@@ -24,24 +25,7 @@ const statusTextColors = {
   rejected: '#dc2626',
 };
 
-// 获取视频预签名 URL（自动替换为 CDN 域名）
-const CDN_DOMAIN = null; // 未配置 CDN 时必须保持 null
-async function getVideoUrl(key) {
-  if (!key) return null;
-  const { data } = await supabase.functions.invoke('get-cos-presigned-url', {
-    body: { key },
-  });
-  let url = data?.url || data || null;
-  // 替换为 CDN 自定义域名，使请求经过 CDN 缓存
-  if (url && CDN_DOMAIN) {
-    url = url.replace(
-      /review-videos-1438185079\.cos\.ap-beijing\.myqcloud\.com/,
-      CDN_DOMAIN
-    );
-  }
-  return url;
-}
-
+// 使用 cos.js 的 getPresignedUrl（带 localStorage 缓存，24h 内不重复请求）
 function VideoThumb({ videoKey, onExpand }) {
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -51,8 +35,10 @@ function VideoThumb({ videoKey, onExpand }) {
   useEffect(() => {
     if (!videoKey) { setLoading(false); return; }
     let cancelled = false;
-    getVideoUrl(videoKey).then((u) => {
+    getPresignedUrl(videoKey).then((u) => {
       if (!cancelled) { setUrl(u); setLoading(false); }
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
   }, [videoKey]);

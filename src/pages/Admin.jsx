@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 export default function Admin() {
-  const { isAdmin, profile } = useAuth();
+  const { isAdmin, profile, user } = useAuth();
   const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState(null);
@@ -137,6 +137,25 @@ export default function Admin() {
     setUsers(users.map((u) => (u.id === userId ? { ...u, role } : u)));
   }
 
+  async function deleteUser(userId) {
+    const target = users.find((u) => u.id === userId);
+    const isSelf = userId === profile?.id;
+    if (isSelf) {
+      alert('不能删除自己的账号');
+      return;
+    }
+    if (!window.confirm(`确定要删除账号 "${target?.email || target?.username || userId}" 吗？\n\n删除后该用户将无法登录，此操作不可撤销。`)) return;
+    const { error } = await supabase
+      .from('profiles')
+      .delete()
+      .eq('id', userId);
+    if (error) {
+      alert('删除失败: ' + error.message);
+      return;
+    }
+    setUsers(users.filter((u) => u.id !== userId));
+  }
+
   if (!isAdmin) return null;
 
   return (
@@ -230,6 +249,14 @@ export default function Admin() {
                     取消管理员
                   </button>
                 )}
+                {u.id !== (profile?.id || user?.id) && (
+                  <button
+                    style={styles.deleteBtn}
+                    onClick={() => deleteUser(u.id)}
+                  >
+                    删除
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -317,7 +344,7 @@ const styles = {
   colRole: { width: 100 },
   colStatus: { width: 100 },
   colTime: { width: 120 },
-  colAction: { width: 200, display: 'flex', gap: 6, justifyContent: 'flex-end' },
+  colAction: { width: 260, display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' },
   badge: {
     padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500,
     background: '#f5f5f5', color: '#666',
@@ -332,6 +359,10 @@ const styles = {
   },
   demoteBtn: {
     padding: '4px 10px', background: 'transparent', border: '1px solid #fecaca',
+    borderRadius: 6, color: '#dc2626', fontSize: 12, cursor: 'pointer',
+  },
+  deleteBtn: {
+    padding: '4px 10px', background: '#fef2f2', border: '1px solid #fecaca',
     borderRadius: 6, color: '#dc2626', fontSize: 12, cursor: 'pointer',
   },
 
