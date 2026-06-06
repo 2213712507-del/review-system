@@ -13,7 +13,7 @@ export default function Admin() {
   const [usernameDraft, setUsernameDraft] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [monthlyStats, setMonthyStats] = useState([]);
+  const [monthlyStats, setMonthlyStats] = useState([]);
   // 拍摄时长录入
   const [showShootModal, setShowShootModal] = useState(false);
   const [shootForm, setShootForm] = useState({ userId: '', shootDate: '', hours: '', minutes: '', notes: '' });
