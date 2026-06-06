@@ -204,6 +204,7 @@ export default function ReviewTable() {
   const [items, setItems] = useState([]);
   const [projectMembers, setProjectMembers] = useState([]); // [{user_id, role, name}]
   const [versionsMap, setVersionsMap] = useState({});
+  const [seenVersionMap, setSeenVersionMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState({ script_no: '', title: '', assignee_id: '' });
@@ -262,19 +263,32 @@ export default function ReviewTable() {
       // 查询所有条目的版本记录
       if (itemsData.length > 0) {
         const itemIds = itemsData.map((i) => i.id);
-        const { data: verData } = await supabase
-          .from('video_versions')
-          .select('*')
-          .in('item_id', itemIds)
-          .order('version_no', { ascending: false });
+        const [verRes, seenRes] = await Promise.all([
+          supabase
+            .from('video_versions')
+            .select('*')
+            .in('item_id', itemIds)
+            .order('version_no', { ascending: false }),
+          supabase
+            .from('video_version_seen')
+            .select('item_id, last_seen_version')
+            .eq('user_id', user.id),
+        ]);
         const map = {};
-        (verData || []).forEach((v) => {
+        (verRes.data || []).forEach((v) => {
           if (!map[v.item_id]) map[v.item_id] = [];
           map[v.item_id].push(v);
         });
         setVersionsMap(map);
+        // 构建已读版本映射 { itemId: lastSeenVersion }
+        const seenMap = {};
+        (seenRes.data || []).forEach((s) => {
+          seenMap[s.item_id] = s.last_seen_version;
+        });
+        setSeenVersionMap(seenMap);
       } else {
         setVersionsMap({});
+        setSeenVersionMap({});
       }
     } catch (err) {
       console.error(err);
@@ -290,6 +304,28 @@ export default function ReviewTable() {
       setItems(items.map(i => i.id === itemId ? { ...i, script_text: text } : i));
     } catch (err) {
       alert('保存失败: ' + err.message);
+    }
+  }
+
+  /** 标记用户已查看某条目的最新版本（用于消除 NEW 标记） */
+  async function markVersionSeen(itemId, versionNo) {
+    try {
+      // upsert：有则更新，无则插入
+      const existing = seenVersionMap[itemId];
+      if (existing !== undefined) {
+        await supabase
+          .from('video_version_seen')
+          .update({ last_seen_version: versionNo, updated_at: new Date().toISOString() })
+          .eq('user_id', user.id)
+          .eq('item_id', itemId);
+      } else {
+        await supabase
+          .from('video_version_seen')
+          .insert({ user_id: user.id, item_id: itemId, last_seen_version: versionNo });
+      }
+      setSeenVersionMap(prev => ({ ...prev, [itemId]: versionNo }));
+    } catch (err) {
+      console.error('标记版本已读失败:', err);
     }
   }
 
@@ -387,6 +423,13 @@ export default function ReviewTable() {
         .eq('id', itemId);
 
       if (error) throw error;
+
+      // 清除该条目所有用户的已读状态，使所有人重新看到 NEW
+      await supabase
+        .from('video_version_seen')
+        .delete()
+        .eq('item_id', itemId);
+
       await fetchData();
     } catch (err) {
       const msg = err?.message || err?.toString?.() || JSON.stringify(err) || '未知错误';
@@ -655,6 +698,8 @@ export default function ReviewTable() {
                     onUploadNewVersion={(file) => handleVideoUpload(item.id, file)}
                     uploading={uploading[item.id] !== undefined}
                     uploadPercent={uploading[item.id]}
+                    isNewVersion={item.latest_version > (seenVersionMap[item.id] || 0)}
+                    onVersionSeen={() => markVersionSeen(item.id, item.latest_version)}
                   />
                 ) : (
                   <div
@@ -845,7 +890,7 @@ export default function ReviewTable() {
   );
 }
 
-function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPercent }) {
+function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPercent, isNewVersion, onVersionSeen }) {
   const [activeVersion, setActiveVersion] = useState(null);
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -894,6 +939,8 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
     e.preventDefault();
     e.stopPropagation();
     setExpanded(true);
+    // 标记该版本已被当前用户预览过
+    if (isNewVersion && onVersionSeen) onVersionSeen();
   }
 
   function handleClose(e) {
@@ -957,20 +1004,35 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
         {/* 版本切换 + 上传新版本 */}
         <div style={styles.versionRow}>
           {versions.length >= 1 && (
-            <select
-              style={styles.versionSelect}
-              value={selected?.version_no || ''}
-              onChange={(e) => {
-                const v = versions.find((v) => v.version_no === Number(e.target.value));
-                if (v) setActiveVersion(v);
-              }}
-            >
-              {versions.map((v) => (
-                <option key={v.id} value={v.version_no}>
-                  v{v.version_no}
-                </option>
-              ))}
-            </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
+              <select
+                style={styles.versionSelect}
+                value={selected?.version_no || ''}
+                onChange={(e) => {
+                  const v = versions.find((v) => v.version_no === Number(e.target.value));
+                  if (v) setActiveVersion(v);
+                }}
+              >
+                {versions.map((v) => (
+                  <option key={v.id} value={v.version_no}>
+                    v{v.version_no}
+                  </option>
+                ))}
+              </select>
+              {isNewVersion && (
+                <span style={{
+                  display: 'inline-block',
+                  padding: '1px 6px',
+                  background: '#dc2626',
+                  color: '#fff',
+                  borderRadius: 4,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  lineHeight: '16px',
+                  letterSpacing: '0.5px',
+                }}>NEW</span>
+              )}
+            </div>
           )}
           <label style={styles.uploadNewBtn}>
             上传新版
@@ -1000,20 +1062,35 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
           <div style={styles.overlayContent} onClick={(e) => e.stopPropagation()}>
             <div style={styles.overlayHeader}>
               {versions.length > 1 && (
-                <select
-                  style={styles.versionSelectOverlay}
-                  value={selected?.version_no || ''}
-                  onChange={(e) => {
-                    const v = versions.find((v) => v.version_no === Number(e.target.value));
-                    if (v) setActiveVersion(v);
-                  }}
-                >
-                  {versions.map((v) => (
-                    <option key={v.id} value={v.version_no}>
-                      v{v.version_no}
-                    </option>
-                  ))}
-                </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <select
+                    style={styles.versionSelectOverlay}
+                    value={selected?.version_no || ''}
+                    onChange={(e) => {
+                      const v = versions.find((v) => v.version_no === Number(e.target.value));
+                      if (v) setActiveVersion(v);
+                    }}
+                  >
+                    {versions.map((v) => (
+                      <option key={v.id} value={v.version_no}>
+                        v{v.version_no}
+                      </option>
+                    ))}
+                  </select>
+                  {isNewVersion && (
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      background: '#dc2626',
+                      color: '#fff',
+                      borderRadius: 4,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      lineHeight: '20px',
+                      letterSpacing: '0.5px',
+                    }}>NEW</span>
+                  )}
+                </div>
               )}
               <button style={styles.closeBtn} onClick={handleClose}>✕</button>
             </div>
