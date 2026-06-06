@@ -93,7 +93,7 @@ export default function Admin() {
     (profiles || []).forEach((p) => { profileMap[p.id] = p; });
 
     // 按 上传者+月份 分组
-    const monthyMap = {};
+    const monthlyMap = {};
     const uploaderTotalMap = {};
 
     items.forEach((item) => {
