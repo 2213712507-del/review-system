@@ -89,7 +89,7 @@ function VideoThumb({ videoKey, onExpand }) {
         crossOrigin="anonymous"
         style={{ display: 'none' }}
         onLoadedMetadata={handleProbeMeta}
-        preload="none"
+        preload="metadata"
       />
       <video
         src={url}
@@ -100,7 +100,7 @@ function VideoThumb({ videoKey, onExpand }) {
           background: '#000', cursor: 'pointer',
         }}
         onClick={() => onExpand && onExpand(url)}
-        preload="none"
+        preload="metadata"
       />
     </div>
   );
