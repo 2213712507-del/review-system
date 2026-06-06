@@ -50,14 +50,28 @@ export default function Admin() {
       return;
     }
 
+    // Fetch all profiles to get username+email mapping
+    const uploaderIds = [...new Set(items.map((i) => i.uploader_id))];
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, username, email')
+      .in('id', uploaderIds);
+    const profileMap = {};
+    (profiles || []).forEach((p) => {
+      profileMap[p.id] = p;
+    });
+
     // Group by uploader
     const uploaderMap = {};
     items.forEach((item) => {
       const uid = item.uploader_id;
+      const prof = profileMap[uid] || {};
       if (!uploaderMap[uid]) {
         uploaderMap[uid] = {
           uploader_id: uid,
           uploader_name: item.uploader_name,
+          username: prof.username || '',
+          email: prof.email || '',
           total_uploads: 0,
           approved_count: 0,
           total_review_hours: 0,
@@ -104,6 +118,14 @@ export default function Admin() {
   }
 
   async function updateUserRole(userId, role) {
+    // 防止自己取消自己的管理员权限（至少保留一个管理员）
+    if (role !== 'admin' && userId === profile?.id) {
+      const admins = users.filter((u) => u.role === 'admin');
+      if (admins.length <= 1) {
+        alert('系统中必须至少保留一个管理员');
+        return;
+      }
+    }
     const { error } = await supabase
       .from('profiles')
       .update({ role })
@@ -156,7 +178,14 @@ export default function Admin() {
           </div>
           {users.map((u) => (
             <div key={u.id} style={styles.userRow}>
-              <div style={styles.colEmail}>{u.email}</div>
+              <div style={styles.colEmail}>
+                {u.email}
+                {u.username && (
+                  <span style={{ color: '#888', fontSize: 12, marginLeft: 6 }}>
+                    ({u.username})
+                  </span>
+                )}
+              </div>
               <div style={styles.colRole}>
                 <span style={styles.badge}>
                   {u.role === 'admin' ? '管理员' : '上传者'}
@@ -193,7 +222,7 @@ export default function Admin() {
                     设为管理员
                   </button>
                 )}
-  {u.role === 'admin' && u.id !== profile?.id && (
+                {u.role === 'admin' && (
                   <button
                     style={styles.demoteBtn}
                     onClick={() => updateUserRole(u.id, 'uploader')}
@@ -231,7 +260,14 @@ export default function Admin() {
               </div>
               {stats?.uploaders?.map((u, i) => (
                 <div key={i} style={styles.userRow}>
-                  <div style={styles.colEmail}>{u.uploader_name}</div>
+                  <div style={styles.colEmail}>
+                    <div>{u.uploader_name}</div>
+                    {(u.username || u.email) && (
+                      <div style={{ color: '#888', fontSize: 12, marginTop: 2 }}>
+                        {u.username || u.email}
+                      </div>
+                    )}
+                  </div>
                   <div style={styles.colRole}>{u.total_uploads}</div>
                   <div style={styles.colStatus}>{u.approved_count}</div>
                   <div style={styles.colTime}>
