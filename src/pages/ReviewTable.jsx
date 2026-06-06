@@ -948,7 +948,7 @@ function VideoPlayer({ item, versions, onUploadNewVersion, uploading, uploadPerc
           crossOrigin="anonymous"
           muted
           style={{ ...thumbStyle, cursor: 'pointer' }}
-          preload="metadata"
+          preload="none"
           onClick={handleExpand}
           title="点击放大播放"
           onError={(e) => { console.error('视频加载失败:', e); setLoadErr('视频无法播放'); }}

@@ -24,13 +24,22 @@ const statusTextColors = {
   rejected: '#dc2626',
 };
 
-// 获取视频预签名 URL
+// 获取视频预签名 URL（自动替换为 CDN 域名）
+const CDN_DOMAIN = 'review-system.online';
 async function getVideoUrl(key) {
   if (!key) return null;
   const { data } = await supabase.functions.invoke('get-cos-presigned-url', {
     body: { key },
   });
-  return data?.url || data || null;
+  let url = data?.url || data || null;
+  // 替换为 CDN 自定义域名，使请求经过 CDN 缓存
+  if (url && CDN_DOMAIN) {
+    url = url.replace(
+      /review-videos-1438185079\.cos\.ap-beijing\.myqcloud\.com/,
+      CDN_DOMAIN
+    );
+  }
+  return url;
 }
 
 function VideoThumb({ videoKey, onExpand }) {
@@ -80,6 +89,7 @@ function VideoThumb({ videoKey, onExpand }) {
         crossOrigin="anonymous"
         style={{ display: 'none' }}
         onLoadedMetadata={handleProbeMeta}
+        preload="none"
       />
       <video
         src={url}
@@ -90,7 +100,7 @@ function VideoThumb({ videoKey, onExpand }) {
           background: '#000', cursor: 'pointer',
         }}
         onClick={() => onExpand && onExpand(url)}
-        preload="metadata"
+        preload="none"
       />
     </div>
   );
