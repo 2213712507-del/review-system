@@ -222,7 +222,7 @@ export default function Admin() {
                     设为管理员
                   </button>
                 )}
-                {u.role === 'admin' && (
+                {u.role === 'admin' && u.id !== (profile?.id || user?.id) && (
                   <button
                     style={styles.demoteBtn}
                     onClick={() => updateUserRole(u.id, 'uploader')}
