@@ -336,6 +336,7 @@ export default function ReviewTable() {
       const { data, error } = await supabase
         .from('script_items')
         .insert({
+          project_id: projectId,
           date_id: dateId,
           script_no: newItem.script_no.trim(),
           title: newItem.title.trim(),

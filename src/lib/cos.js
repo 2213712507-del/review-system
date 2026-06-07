@@ -1,6 +1,19 @@
 import { supabase } from './supabase';
 import COS from 'cos-js-sdk-v5';
 
+// ── 存储模式切换 ─────────────────────────────
+// cos  = 腾讯云 COS（默认，现有行为）
+// local = 本地视频服务器（Windows PC）
+const STORAGE_TYPE =
+  (import.meta.env.VITE_STORAGE_TYPE || 'local').toLowerCase();
+
+// 本地视频服务器配置（仅 STORAGE_TYPE=local 时生效）
+const LOCAL_SERVER_URL =
+  import.meta.env.VITE_VIDEO_SERVER_URL || '';
+const LOCAL_SECRET =
+  import.meta.env.VITE_VIDEO_SECRET || '';
+
+// ── COS 配置（仅 STORAGE_TYPE=cos 时使用）──
 export const BUCKET = 'review-videos-1438185079';
 export const REGION = 'ap-beijing';
 
@@ -12,7 +25,7 @@ export const BASE_URL = CDN_DOMAIN
   ? `https://${CDN_DOMAIN}`
   : `https://${BUCKET}.cos.${REGION}.myqcloud.com`;
 
-// ── COS 实例缓存 ────────────────────────────────────────────────
+// ── COS 实例缓存 ────────────────────────────────────────
 let cosInstance = null;
 let keyExpiredAt = 0;
 
@@ -47,7 +60,7 @@ async function getCOSInstance() {
   return cosInstance;
 }
 
-// ── 预签名 URL 缓存（localStorage + 内存，24h 内不重复请求）───
+// ── 预签名 URL 缓存（localStorage + 内存，23h 内不重复请求）───
 const _presignCache = new Map();           // 内存缓存（本次 session）
 const PRESIGN_LS_PREFIX = 'cos_presign_';
 const PRESIGN_MAX_AGE = 23 * 3600 * 1000; // 23h，留 1h 余量
@@ -81,8 +94,14 @@ function _setPresignCache(key, url) {
   try { localStorage.setItem(PRESIGN_LS_PREFIX + key, JSON.stringify(entry)); } catch {}
 }
 
-// ── 上传 ────────────────────────────────────────────────────────
+// ── 上传（双模式）────────────────────────────────────────────
 export async function uploadToCOS(file, key, onProgress) {
+  // ── 本地服务器模式 ──
+  if (STORAGE_TYPE === 'local') {
+    return uploadToLocal(file, onProgress);
+  }
+
+  // ── COS 模式（原逻辑）──
   const cos = await getCOSInstance();
 
   return new Promise((resolve, reject) => {
@@ -111,9 +130,40 @@ export async function uploadToCOS(file, key, onProgress) {
   });
 }
 
-// ── 获取观看 URL（带签名，24小时有效）────────────────────────
+// ── 本地服务器上传 ──────────────────────────────────────
+async function uploadToLocal(file, onProgress) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        const data = JSON.parse(xhr.responseText);
+        resolve({ key: data.fileId, url: data.url });
+      } else {
+        reject(new Error('上传失败: ' + xhr.statusText));
+      }
+    };
+    xhr.onerror = () => reject(new Error('上传失败，请检查本地服务器是否在线'));
+    xhr.open('POST', `${LOCAL_SERVER_URL}/upload?secret=${LOCAL_SECRET}`);
+    xhr.send(formData);
+  });
+}
+
+// ── 获取观看 URL（双模式）────────────────────────────
 export async function getPresignedUrl(key) {
-  // 命中缓存直接返回
+  // ── 本地服务器模式 ──
+  if (STORAGE_TYPE === 'local') {
+    return getLocalVideoUrl(key);
+  }
+
+  // ── COS 模式（原逻辑 + 缓存）──
   const cached = _getPresignCache(key);
   if (cached) {
     console.log('[cache] 预签名 URL 缓存命中:', key.substring(0, 30) + '...');
@@ -135,7 +185,6 @@ export async function getPresignedUrl(key) {
         reject(err);
       } else {
         let url = data.Url;
-        // 替换为 CDN 自定义域名，使视频请求经过 CDN 缓存
         if (CDN_DOMAIN) {
           url = url.replace(
             `${BUCKET}.cos.${REGION}.myqcloud.com`,
@@ -150,13 +199,49 @@ export async function getPresignedUrl(key) {
   });
 }
 
-// ── 删除 ────────────────────────────────────────────────────────
+// ── 本地服务器：获取带 token 的视频 URL ──────────────────────
+async function getLocalVideoUrl(fileId) {
+  // 先查内存缓存
+  const memKey = `local_${fileId}`;
+  if (_presignCache.has(memKey)) {
+    const entry = _presignCache.get(memKey);
+    if (Date.now() < entry.expiresAt) return entry.url;
+    _presignCache.delete(memKey);
+  }
+
+  // 调用本地服务器获取 token
+  const res = await fetch(`${LOCAL_SERVER_URL}/presign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileId }),
+  });
+
+  if (!res.ok) throw new Error('获取播放 token 失败');
+  const { token } = await res.json();
+  const url = `${LOCAL_SERVER_URL}/video/${fileId}?token=${token}`;
+
+  _presignCache.set(memKey, { url, expiresAt: Date.now() + PRESIGN_MAX_AGE });
+  return url;
+}
+
+// ── 删除（双模式）─────────────────────────────────────
 export async function deleteFromCOS(key) {
+  // ── 本地服务器模式 ──
+  if (STORAGE_TYPE === 'local') {
+    const res = await fetch(
+      `${LOCAL_SERVER_URL}/video/${key}?secret=${LOCAL_SECRET}`,
+      { method: 'DELETE' }
+    );
+    if (!res.ok) throw new Error('本地服务器删除失败');
+    return { success: true };
+  }
+
+  // ── COS 模式（原逻辑）──
   const cos = await getCOSInstance();
 
   return new Promise((resolve, reject) => {
     cos.deleteObject({
-      Bucket: BUCKET,
+      Bucket:   BUCKET,
       Region:  REGION,
       Key:     key,
     }, (err) => {
