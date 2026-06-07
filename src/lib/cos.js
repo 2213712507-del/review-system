@@ -9,9 +9,9 @@ const STORAGE_TYPE =
 
 // 本地视频服务器配置（仅 STORAGE_TYPE=local 时生效）
 const LOCAL_SERVER_URL =
-  import.meta.env.VITE_VIDEO_SERVER_URL || '';
+  import.meta.env.VITE_VIDEO_SERVER_URL || 'https://674d5cc1.r19.cpolar.top';
 const LOCAL_SECRET =
-  import.meta.env.VITE_VIDEO_SECRET || '';
+  import.meta.env.VITE_VIDEO_SECRET || 'changeme-replace-with-random-string';
 
 // ── COS 配置（仅 STORAGE_TYPE=cos 时使用）──
 export const BUCKET = 'review-videos-1438185079';
