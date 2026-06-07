@@ -212,7 +212,10 @@ async function getLocalVideoUrl(fileId) {
   // 调用本地服务器获取 token
   const res = await fetch(`${LOCAL_SERVER_URL}/presign`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-VS-Secret': LOCAL_SECRET,
+    },
     body: JSON.stringify({ fileId }),
   });
 
